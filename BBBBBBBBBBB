@@ -1,133 +1,421 @@
-PS C:\Users\CKhadra\Desktop\scripts> C:\DevTools\Jdev\oracle_common\common\bin\wlst.cmd .\clone_jdbc_and_hook_dbadapter.py
+# -*- coding: ascii -*-
+# =============================================================================
+# clone_jdbc_and_hook_dbadapter_win.py
+#
+# Windows-safe, WLST/Jython-safe.
+# 1) Reads JDBC from DEV
+# 2) Creates same JDBC on LOCAL (Windows), target DefaultServer
+# 3) Hooks DbAdapter connection-instances to those JDBC JNDIs
+#
+# Run (Windows):
+#   "C:\DevTools\Jdev\oracle_common\common\bin\wlst.cmd" .\clone_jdbc_and_hook_dbadapter_win.py
+# =============================================================================
 
-Initializing WebLogic Scripting Tool (WLST) ...
+# ----------------------- USER SETTINGS ---------------------------------------
+DEV_ADMIN_URL   = 't3://uat-osb1.sgbl.com.lb:7601'   # your DEV URL
+DEV_ADMIN_USER  = 'ckhadra'                          # user
+DEV_ADMIN_PASS  = '***'                              # pass
 
-Welcome to WebLogic Server Administration Scripting Shell
+LOCAL_ADMIN_URL  = 't3://localhost:7101'             # JDev Integrated default
+LOCAL_ADMIN_USER = 'weblogic'
+LOCAL_ADMIN_PASS = '***'
 
-Type help() for help on available commands
+LOCAL_FALLBACK_SERVER = 'DefaultServer'
 
+# Skip obvious system datasources from DEV (recommended=True)
+EXCLUDE_SYSTEM_JDBC = True
 
-[10:10:39] >>> DEV: export JDBC and DbAdapter links
-[10:10:39] Connecting to DEV: t3://uat-osb1.sgbl.com.lb:7601
-Connecting to t3://uat-osb1.sgbl.com.lb:7601 with userid ckhadra ...
-Successfully connected to Admin Server "AdminServer" that belongs to domain "bbdev_domain".
+# If you want to set local DS passwords via env vars:
+#   set DS_<NAME>_PASSWORD=yourpass
+USE_ENV_PASSWORDS = True
 
-Warning: An insecure protocol was used to connect to the server.
-To ensure on-the-wire security, the SSL port or Admin port should be used instead.
+# ----------------------- IMPORTS / LOGGING -----------------------------------
+from datetime import datetime
+import os
+from javax.management import ObjectName
 
-Location changed to domainConfig tree. This is a read-only tree
-with DomainMBean as the root MBean.
-For more help, use help('domainConfig')
+def ts(): return datetime.now().strftime('%H:%M:%S')
+def info(m): print '[%s] %s' % (ts(), m)
+def step(m): print '\n[%s] >>> %s' % (ts(), m)
 
-[10:10:39] Connected to DEV and in domainConfig
-This Exception occurred at Wed Sep 24 10:10:39 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=WLSSchemaDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=WLSSchemaDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=LocalSvcTblDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=LocalSvcTblDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=opss-data-source,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=opss-data-source,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=opss-audit-viewDS,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=opss-audit-viewDS,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=opss-audit-DBDS,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=opss-audit-DBDS,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=mds-owsm,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=mds-owsm,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=OraSDPMDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=OraSDPMDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=wlsbjmsrpDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=wlsbjmsrpDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=SOADataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=SOADataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=SOALocalTxDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=SOALocalTxDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=MWDB,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=MWDB,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
-dr--   SubDeployments
-dr--   Targets
+# ----------------------- FILTERS ---------------------------------------------
+_EXCLUDE_JDBC_PREFIX = (
+  'SOADataSource','EDNDataSource','EDNLocalTxDataSource','OraSDPMDataSource',
+  'mds-','opss-','wlsbjmsrp','WLSSchemaDataSource','LocalSvcTblDataSource',
+  'SOALocalTxDataSource','SOA_MDS','FMwDT','FMWDT','Audit','bam','mds-owsm',
+  'SOAINFRA','ESSDS','UmsDataSource','RSMANAGEDDS','STBDataSource'
+)
 
--r--   AbsoluteAltDescriptorDir                     null
--r--   AbsoluteAltDescriptorPath                    null
--r--   AbsoluteInstallDir                           null
--r--   AbsolutePlanDir                              null
--r--   AbsolutePlanPath                             /u01/app/oracle/product/12.2.1.4/soa/soa/connectors/DB_BB_DEV_Plan.xml
--r--   AbsoluteSourcePath                           /u01/app/oracle/product/12.2.1.4/soa/soa/connectors/DbAdapter.rar
--r--   AltDescriptorDir                             null
--r--   ApplicationIdentifier                        DbAdapter
--r--   ApplicationName                              DbAdapter
--r--   CacheInAppDirectory                          false
--r--   CompatibilityName                            null
--r--   DeploymentOrder                              100
--r--   DeploymentPlan                               [B@3478b6a0
--r--   DeploymentPlanExternalDescriptors            null
--r--   DeploymentPrincipalName                      null
--r--   DynamicallyCreated                           false
--r--   Id                                           0
--r--   InstallDir                                   null
--r--   ModuleType                                   rar
--r--   Name                                         DbAdapter
--r--   Notes                                        null
--r--   ParallelDeployModules                        false
--r--   PlanDir                                      null
--r--   PlanPath                                     /u01/app/oracle/product/12.2.1.4/soa/soa/connectors/DB_BB_DEV_Plan.xml
--r--   PlanStagingMode                              null
--r--   SecurityDDModel                              DDOnly
--r--   SourcePath                                   /u01/app/oracle/product/12.2.1.4/soa/soa/connectors/DbAdapter.rar
--r--   StagingMode                                  nostage
--r--   Tags                                         null
--r--   Type                                         AppDeployment
--r--   Untargeted                                   false
--r--   ValidateDDSecurityData                       false
--r--   VersionIdentifier                            null
+def _skip_jdbc(name):
+    if not EXCLUDE_SYSTEM_JDBC: return False
+    if name is None: return True
+    low = name.lower()
+    i = 0
+    while i < len(_EXCLUDE_JDBC_PREFIX):
+        if low.startswith(_EXCLUDE_JDBC_PREFIX[i].lower()):
+            return True
+        i += 1
+    return False
 
--r-x   freezeCurrentValue                           Void : String(attributeName)
--r-x   getInheritedProperties                       String[] : String[](propertyNames)
--r-x   isInherited                                  Boolean : String(propertyName)
--r-x   isSet                                        Boolean : String(propertyName)
--r-x   unSet                                        Void : String(propertyName)
+# ----------------------- COMMON WLST HELPERS ---------------------------------
+def ensure_edit():
+    try:
+        edit(); startEdit(waitTimeInMillis=600000)
+        return True
+    except:
+        return True
 
-[10:10:42] Warning: could not read DbAdapter plan on DEV
-Disconnected from weblogic server: AdminServer
-[10:10:42] Disconnected from DEV
-[10:10:42] DEV JDBC count: 11
-[10:10:42] DEV DbAdapter CI entries: 0
+def activate_changes():
+    try:
+        save(); activate(block='true')
+        return True
+    except:
+        return False
 
-[10:10:42] >>> LOCAL: connect
-Connecting to t3://localhost:7101 with userid weblogic ...
-Successfully connected to Admin Server "DefaultServer" that belongs to domain "DefaultDomain".
+def _pwd():
+    try: return pwd()
+    except: return '(unknown)'
 
-Warning: An insecure protocol was used to connect to the server.
-To ensure on-the-wire security, the SSL port or Admin port should be used instead.
+# ----------------------- DEV: EXPORT JDBC ------------------------------------
+def dev_read_jdbc():
+    jdbc_list = []
 
+    info('Connecting to DEV: %s' % DEV_ADMIN_URL)
+    connect(DEV_ADMIN_USER, DEV_ADMIN_PASS, DEV_ADMIN_URL)
+    domainConfig(); info('Connected to DEV (domainConfig)')
 
-[10:10:47] Connected to LOCAL and in domainConfig
-[10:10:47] JDBC: WLSSchemaDataSource
-No stack trace available.
-Problem invoking WLST - Traceback (innermost last):
-  File "C:\Users\CKhadra\Desktop\scripts\clone_jdbc_and_hook_dbadapter.py", line 483, in ?
-  File "C:\Users\CKhadra\Desktop\scripts\clone_jdbc_and_hook_dbadapter.py", line 469, in main
-  File "C:\Users\CKhadra\Desktop\scripts\clone_jdbc_and_hook_dbadapter.py", line 248, in local_create_jdbc
-  File "<iostream>", line 819, in ls
-  File "<iostream>", line 553, in raiseWLSTException
-WLSTException: Error cding to the MBean
+    try:
+        cd('/JDBCSystemResources')
+        jdbcs = cmo.getJDBCSystemResources()
+        if jdbcs:
+            i = 0
+            while i < len(jdbcs):
+                jdbc = jdbcs[i]; i += 1
+                name = jdbc.getName()
+                if _skip_jdbc(name):
+                    continue
+
+                jndi = []
+                driver = None
+                url = None
+                props = {}
+
+                # JNDI names
+                try:
+                    cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDataSourceParams/%s' % (name, name, name))
+                    jn = cmo.getJNDINames()
+                    if jn:
+                        k = 0
+                        while k < len(jn):
+                            jndi.append(jn[k]); k += 1
+                except:
+                    pass
+
+                # Driver, URL, properties (passwords will be ignored in import)
+                try:
+                    cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDriverParams/%s' % (name, name, name))
+                    try: driver = str(cmo.getDriverName())
+                    except: driver = None
+                    try: url = str(cmo.getUrl())
+                    except: url = None
+                    try:
+                        pset = cmo.getProperties()
+                        if pset:
+                            plist = pset.getProperties()
+                            if plist:
+                                p = 0
+                                while p < len(plist):
+                                    pr = plist[p]; p += 1
+                                    pname = pr.getName()
+                                    pval  = pr.getValue()
+                                    if pname is not None:
+                                        key = str(pname)
+                                        # store value as string (we will skip password on import)
+                                        if pval is None:
+                                            props[key] = None
+                                        else:
+                                            try:
+                                                props[key] = str(pval)
+                                            except:
+                                                props[key] = "%s" % pval
+                    except:
+                        pass
+                except:
+                    pass
+
+                cd('/')
+                jdbc_list.append({'name': name, 'jndi': jndi, 'driver': driver, 'url': url, 'props': props})
+    except:
+        info('Warning: could not enumerate DEV JDBCSystemResources')
+
+    disconnect(); info('Disconnected from DEV')
+    return jdbc_list
+
+# ----------------------- LOCAL: TARGETING ------------------------------------
+def local_servers():
+    cd('/Servers'); L = []; xs = cmo.getServers()
+    if xs:
+        i = 0
+        while i < len(xs):
+            L.append(xs[i].getName()); i += 1
+    cd('/'); return L
+
+def local_default_target():
+    cd('/')
+    try:
+        srvs = cmo.getServers()
+        def objn(n): return ObjectName('com.bea:Name=' + n + ',Type=Server')
+        if srvs:
+            names = []
+            i = 0
+            while i < len(srvs):
+                names.append(srvs[i].getName()); i += 1
+            if LOCAL_FALLBACK_SERVER in names:
+                return [objn(LOCAL_FALLBACK_SERVER)]
+            return [objn(names[0])]
+    except:
+        pass
+    return []
+
+def jdbc_exists(name):
+    try:
+        cd('/')
+        return cmo.lookupJDBCSystemResource(name) is not None
+    except:
+        return False
+
+# ----------------------- LOCAL: CREATE JDBC ----------------------------------
+def local_create_jdbc(ds):
+    name   = ds.get('name')
+    jndi   = ds.get('jndi') or []
+    url    = ds.get('url')
+    driver = ds.get('driver')
+    props  = ds.get('props') or {}
+
+    info('JDBC: %s' % name)
+
+    if jdbc_exists(name):
+        info('  Exists, skipping create.')
+        return True
+
+    ensure_edit()
+    try:
+        cd('/')
+        cmo.createJDBCSystemResource(name)
+        info('  Created JDBCSystemResource/%s' % name)
+
+        # JNDI
+        try:
+            cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDataSourceParams/%s' % (name, name, name))
+            from jarray import array as jarrayArray
+            from java.lang import String
+            set('JNDINames', jarrayArray(jndi, String))
+            info('  JNDI names = %s' % (jndi,))
+        except:
+            info('  Warning: could not set JNDI names (pwd=%s)' % _pwd())
+
+        # Driver / URL / Properties (skip any key containing "password")
+        try:
+            cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDriverParams/%s' % (name, name, name))
+            if driver:
+                cmo.setDriverName(driver); info('  DriverName = %s' % driver)
+            if url:
+                cmo.setUrl(url); info('  URL        = %s' % url)
+            try:
+                cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDriverParams/%s/Properties/%s' % (name, name, name, name))
+                keys = props.keys(); i = 0
+                while i < len(keys):
+                    k = keys[i]; i += 1
+                    if k is None: 
+                        continue
+                    kstr = str(k)
+                    if kstr.lower().find('password') != -1:
+                        continue
+                    if not ls('Properties/' + kstr, returnMap='true'):
+                        cmo.createProperty(kstr)
+                    cd('Properties/' + kstr)
+                    try:
+                        v = props[k]
+                        if v is not None: cmo.setValue(str(v))
+                    except:
+                        pass
+                    cd('..')
+                # Optional: set password from environment variable DS_<NAME>_PASSWORD
+                if USE_ENV_PASSWORDS:
+                    env_key = 'DS_' + name.replace('-','_').replace('.','_').upper() + '_PASSWORD'
+                    pw = os.environ.get(env_key)
+                    if pw:
+                        if not ls('Properties/Password', returnMap='true'):
+                            cmo.createProperty('Password')
+                        cd('Properties/Password'); cmo.setValue(pw); cd('..')
+                        info('  Password set from env var %s' % env_key)
+            except:
+                pass
+        except:
+            info('  Warning: could not set Driver/URL (pwd=%s)' % _pwd())
+
+        # Targets
+        try:
+            cd('/JDBCSystemResources/' + name)
+            from jarray import array as jarrayArray
+            mapped = local_default_target()
+            set('Targets', jarrayArray(mapped, ObjectName))
+            info('  Targeted to local server(s): %s' % (mapped,))
+        except:
+            info('  Warning: could not set Targets (pwd=%s)' % _pwd())
+
+        if activate_changes():
+            info('  Activated: %s' % name)
+            return True
+        else:
+            info('  Activate failed for %s' % name)
+            return False
+    except:
+        info('  Create failed for %s (pwd=%s)' % (name, _pwd()))
+        return False
+
+# ----------------------- LOCAL: DBADAPTER HOOK -------------------------------
+def _domain_home():
+    try:
+        cd('/'); return cmo.getRootDirectory()
+    except:
+        return None
+
+def _ensure_dbadapter_plan():
+    adapter = 'DbAdapter'
+    path = '/AppDeployments/' + adapter
+    if not ls(path, returnMap='true'):
+        info('DbAdapter not found in local domain.')
+        return None
+    cd(path)
+    app = cmo
+    plan = app.getDeploymentPlan()
+    if plan is None:
+        # Attach a plan under <DOMAIN>\config\deployments\DbAdapter\plan\plan.xml
+        ensure_edit()
+        dhome = _domain_home()
+        if dhome is None: dhome = os.getcwd()
+        plan_path = os.path.join(dhome, 'config', 'deployments', adapter, 'plan', 'plan.xml')
+        plan_dir  = os.path.dirname(plan_path)
+        if not os.path.isdir(plan_dir): os.makedirs(plan_dir)
+        cmo.setPlanPath(plan_path)
+        if activate_changes(): info('Attached new plan to DbAdapter: %s' % plan_path)
+        cd(path); plan = cmo.getDeploymentPlan()
+    return plan
+
+def _redeploy_dbadapter():
+    try:
+        redeploy('DbAdapter'); info('Redeployed DbAdapter')
+    except:
+        info('Redeploy DbAdapter failed; apply changes may still be pending.')
+
+def local_hook_dbadapter_to_jdbc(jdbc_list):
+    """
+    For each JDBC DS with at least one JNDI name, ensure there is a DbAdapter
+    connection-instance with JNDI 'eis/DB/<JNDI>' and properties:
+       DataSourceName=<JNDI> and xADataSourceName=<JNDI>
+    """
+    step('LOCAL: hook DbAdapter to JDBC')
+    plan = _ensure_dbadapter_plan()
+    if plan is None:
+        info('No plan for DbAdapter; aborting hook.')
+        cd('/'); return
+
+    planBean = plan.getPlanBean()
+
+    # Find or create ModuleOverride for DbAdapter RAR
+    mos = planBean.getModuleOverrides()
+    mo = None
+    if mos:
+        i = 0
+        while i < len(mos):
+            m = mos[i]; i += 1
+            if m.getModuleType() == 'rar':
+                if (m.getModuleName() is None) or (m.getModuleName() == 'DbAdapter'):
+                    mo = m; break
+    if mo is None:
+        mo = planBean.createModuleOverride()
+        mo.setModuleType('rar'); mo.setModuleName('DbAdapter')
+        info('Created ModuleOverride for DbAdapter')
+
+    # Index existing instances by JNDI
+    existing = {}
+    cos = mo.getConnectionInstanceOverrides()
+    if cos:
+        i = 0
+        while i < len(cos):
+            co = cos[i]; i += 1
+            jn = co.getJndiName()
+            if jn: existing[str(jn)] = co
+
+    created = []
+    updated = []
+
+    # For each JDBC, create/ensure an instance
+    i = 0
+    while i < len(jdbc_list):
+        ds = jdbc_list[i]; i += 1
+        jndis = ds.get('jndi') or []
+        if len(jndis) == 0:
+            continue
+        ds_jndi = str(jndis[0])  # pick first JNDI
+        ci_jndi = 'eis/DB/' + ds_jndi.replace('jdbc/','')  # readable default
+
+        if existing.has_key(ci_jndi):
+            co = existing[ci_jndi]
+        else:
+            co = mo.createConnectionInstanceOverride()
+            co.setJndiName(ci_jndi)
+            created.append(ci_jndi)
+
+        # set property overrides
+        def set_prop(bean, pname, pval):
+            if pval is None: return False
+            cprops = bean.getConnectionPropertyOverrides()
+            found = None
+            if cprops:
+                k = 0
+                while k < len(cprops):
+                    cpo = cprops[k]; k += 1
+                    if cpo.getName() == pname:
+                        found = cpo; break
+            if found is None:
+                found = bean.createConnectionPropertyOverride()
+                found.setName(pname)
+            found.setValue(pval)
+            return True
+
+        changed = False
+        if set_prop(co, 'DataSourceName', ds_jndi): changed = True
+        if set_prop(co, 'xADataSourceName', ds_jndi): changed = True
+        if changed and (ci_jndi not in created):
+            updated.append(ci_jndi)
+
+    ensure_edit(); ok = activate_changes()
+    _redeploy_dbadapter()
+    info('DbAdapter hook summary: created=%s updated=%s' % (created, updated))
+    cd('/')
+
+# ----------------------- MAIN ------------------------------------------------
+def main():
+    step('DEV: read JDBC')
+    jdbc_list = dev_read_jdbc()
+    info('DEV JDBC to clone: %d' % len(jdbc_list))
+
+    step('LOCAL: connect')
+    connect(LOCAL_ADMIN_USER, LOCAL_ADMIN_PASS, LOCAL_ADMIN_URL)
+    domainConfig(); info('Connected to LOCAL (domainConfig)')
+
+    created = 0; failed = 0
+    i = 0
+    while i < len(jdbc_list):
+        if local_create_jdbc(jdbc_list[i]): created += 1
+        else: failed += 1
+        i += 1
+    info('LOCAL JDBC created=%d failed=%d' % (created, failed))
+
+    local_hook_dbadapter_to_jdbc(jdbc_list)
+
+    disconnect(); info('Done')
+
+main()
