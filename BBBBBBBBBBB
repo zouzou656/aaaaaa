@@ -1,259 +1,187 @@
-Short answer: Yes, that’s valid JSON in the format my exporter writes.
-And those “Service Bus …” items are product apps—you don’t re-deploy them locally; WebLogic/OSB already ship/install them. For “cloning” to your Integrated domain you typically import only:
-	•	JDBC you actually use (non-system)
-	•	JMS modules (targets + subdeployments + destinations if present)
-	•	JCA adapter plan vars (if any got exported)
-	•	OSB projects (via sbconfig-dev-*.jar)
+PS C:\Users\CKhadra\Desktop\scripts> C:\DevTools\Jdev\oracle_common\common\bin\wlst.cmd .\import_local.py
 
-Below is a WLST/Jython-safe import script that reads your manifest and applies JDBC/JMS + (optionally) imports the OSB jar. It maps Dev targets to your local server (defaults to DefaultServer).
+Initializing WebLogic Scripting Tool (WLST) ...
 
-⸻
+Welcome to WebLogic Server Administration Scripting Shell
 
-import_local.py (run against your Integrated admin)
+Type help() for help on available commands
 
-# =============================================================================
-# import_local.py — apply manifest (JDBC, JMS, subdeployments) to local WLS
-# Usage: $WL_HOME/common/bin/wlst.sh import_local.py
-# =============================================================================
+Connecting to t3://localhost:7101 with userid weblogic ...
+Successfully connected to Admin Server "DefaultServer" that belongs to domain "DefaultDomain".
 
-# --- USER SETTINGS -----------------------------------------------------------
-ADMIN_URL   = 't3://localhost:7101'     # JDeveloper Integrated default
-ADMIN_USER  = 'weblogic'
-ADMIN_PASS  = '***'
+Warning: An insecure protocol was used to connect to the server.
+To ensure on-the-wire security, the SSL port or Admin port should be used instead.
 
-MANIFEST    = './export/manifest-dev-YYYYMMDD-HHMMSS.json'   # <-- set exact file
-SB_JAR      = './export/sbconfig-dev-YYYYMMDD-HHMMSS.jar'    # <-- optional
+Location changed to domainConfig tree. This is a read-only tree
+with DomainMBean as the root MBean.
+For more help, use help('domainConfig')
 
-FALLBACK_SERVER = 'DefaultServer'  # if dev targets don't exist locally
+JDBC: MWDB
+No stack trace available.
+  ! JDBC error for MWDB
+JMS Module: UMSAQJMSSystemResource
+dr--   JMSResource
+dr--   Resource
+dr--   SubDeployments
+dr--   Targets
 
-# --- IMPORTS ----------------------------------------------------------------
-import os
-from javax.management import ObjectName
-from datetime import datetime
+-r--   CompatibilityName                            null
+-r--   DeploymentOrder                              100
+-r--   DeploymentPrincipalName                      null
+-r--   DescriptorFileName                           jms/UMSAQJMSSystemResource-jms.xml
+-r--   DynamicallyCreated                           false
+-r--   Id                                           0
+-r--   ModuleType                                   null
+-r--   Name                                         UMSAQJMSSystemResource
+-r--   Notes                                        null
+-r--   SourcePath                                   ./config/jms/UMSAQJMSSystemResource-jms.xml
+-r--   Tags                                         null
+-r--   Type                                         JMSSystemResource
 
-# --- tiny JSON loader (works on old Jython) ---------------------------------
-def _parse_json_text(txt):
-    # Try builtin json/simplejson if available; else very small safe eval for simple dict/list
-    try:
-        import json
-        return json.loads(txt)
-    except:
-        try:
-            import simplejson as json
-            return json.loads(txt)
-        except:
-            # very limited: assumes the file was produced by our exporter (double quotes, null/true/false)
-            rep = txt.replace('true','True').replace('false','False').replace('null','None')
-            return eval(rep, {"__builtins__": {}})  # no builtins
+-r-x   freezeCurrentValue                           Void : String(attributeName)
+-r-x   getInheritedProperties                       String[] : String[](propertyNames)
+-r-x   isInherited                                  Boolean : String(propertyName)
+-r-x   isSet                                        Boolean : String(propertyName)
+-r-x   unSet                                        Void : String(propertyName)
 
-def _load_manifest(path):
-    fr = open(path, 'r')
-    try:
-        return _parse_json_text(fr.read())
-    finally:
-        fr.close()
+Location changed to edit tree.
+This is a writable tree with DomainMBean as the root.
+To make changes you will need to start an edit session via startEdit().
+For more help, use help('edit').
+You already have an edit session in progress and hence WLST will 
+continue with your edit session.
 
-# --- helpers ----------------------------------------------------------------
-def _get_servers():
-    cd('/Servers')
-    L=[]; xs=cmo.getServers()
-    if xs: 
-        for i in range(len(xs)): L.append(xs[i].getName())
-    cd('/'); return L
+Starting an edit session ...
+Started edit session, be sure to save and activate your changes once you are done.
+This Exception occurred at Wed Sep 24 09:34:24 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=UMSAQJMSSystemResource,Type=JMSSystemResource:JmsResource
+Saving all your changes ...
+Saved all your changes successfully.
+Activating all your changes, this may take a while ...
+The edit lock associated with this edit session is released once the activation is completed.
+Activation completed
+JMS Module: jmsResources
+dr--   JMSResource
+dr--   Resource
+dr--   SubDeployments
+dr--   Targets
 
-def _get_clusters():
-    cd('/Clusters')
-    L=[]; xs=cmo.getClusters()
-    if xs: 
-        for i in range(len(xs)): L.append(xs[i].getName())
-    cd('/'); return L
+-rw-   CompatibilityName                            null
+-rw-   DeploymentOrder                              100
+-rw-   DeploymentPrincipalName                      null
+-r--   DescriptorFileName                           jms/xbusResources-jms.xml
+-r--   DynamicallyCreated                           false
+-r--   Id                                           0
+-rw-   ModuleType                                   null
+-rw-   Name                                         jmsResources
+-rw-   Notes                                        null
+-rw-   SourcePath                                   ./config/jms/xbusResources-jms.xml
+-rw-   Tags                                         null
+-r--   Type                                         JMSSystemResource
 
-def _map_targets(dev_names):
-    servers=_get_servers(); clusters=_get_clusters()
-    objs=[]
-    for n in (dev_names or []):
-        if n in servers:
-            objs.append(ObjectName('com.bea:Name='+n+',Type=Server'))
-        elif n in clusters:
-            objs.append(ObjectName('com.bea:Name='+n+',Type=Cluster'))
-    if len(objs)==0:
-        if FALLBACK_SERVER in servers:
-            objs=[ObjectName('com.bea:Name='+FALLBACK_SERVER+',Type=Server')]
-        elif len(servers)>0:
-            objs=[ObjectName('com.bea:Name='+servers[0]+',Type=Server')]
-    return objs
+-r-x   addTag                                       Boolean : String(tag)
+-r-x   addTarget                                    Void : WebLogicMBean(target)
+-r-x   freezeCurrentValue                           Void : String(attributeName)
+-r-x   getInheritedProperties                       String[] : String[](propertyNames)
+-r-x   isInherited                                  Boolean : String(propertyName)
+-r-x   isSet                                        Boolean : String(propertyName)
+-r-x   removeTag                                    Boolean : String(tag)
+-r-x   removeTarget                                 Void : WebLogicMBean(target)
+-r-x   restoreDefaultValue                          Void : String(attributeName)
+-r-x   unSet                                        Void : String(propertyName)
 
-def _ensure_jdbc(ds):
-    name=ds.get('name'); jndi=ds.get('jndi') or []; url=ds.get('url'); driver=ds.get('driver'); props=ds.get('props') or {}
-    print 'JDBC:', name
-    cd('/')
-    if not ls('/JDBCSystemResources/'+name, returnMap='true'):
-        edit(); startEdit()
-        cmo.createJDBCSystemResource(name)
-        # JNDI
-        try:
-            cd('/JDBCSystemResources/'+name+'/JdbcResource/'+name+'/JDBCDataSourceParams/'+name)
-            from jarray import array as jarrayArray
-            from java.lang import String
-            set('JNDINames', jarrayArray(jndi, String))
-        except: pass
-        # Driver/URL
-        try:
-            cd('/JDBCSystemResources/'+name+'/JdbcResource/'+name+'/JDBCDriverParams/'+name)
-            if driver: cmo.setDriverName(driver)
-            if url:    cmo.setUrl(url)
-            # props
-            try:
-                cd('/JDBCSystemResources/'+name+'/JdbcResource/'+name+'/JDBCDriverParams/'+name+'/Properties/'+name)
-                for k in props.keys():
-                    if not ls('Properties/'+k, returnMap='true'): cmo.createProperty(k)
-                    cd('Properties/'+k); cmo.setValue(props[k]); cd('..')
-            except: pass
-        except: pass
-        # Targets
-        try:
-            cd('/JDBCSystemResources/'+name)
-            from jarray import array as jarrayArray
-            set('Targets', jarrayArray(_map_targets(ds.get('targets')), ObjectName))
-        except: pass
-        save(); activate(block='true')
-    else:
-        print '  (exists)'
+Already in requested Edit Tree
 
-def _ensure_jms_module(mod):
-    mname=mod.get('name')
-    print 'JMS Module:', mname
-    cd('/')
-    if not ls('/JMSSystemResources/'+mname, returnMap='true'):
-        edit(); startEdit()
-        cmo.createJMSSystemResource(mname)
-        try:
-            cd('/JMSSystemResources/'+mname)
-            from jarray import array as jarrayArray
-            set('Targets', jarrayArray(_map_targets(mod.get('targets')), ObjectName))
-        except: pass
-        save(); activate(block='true')
+Starting an edit session ...
+Started edit session, be sure to save and activate your changes once you are done.
+dr--   SubDeployments
+dr--   Targets
 
-    # ensure subdeployments first (targets on the module bean)
-    subs=mod.get('subdeployments') or {}
-    if len(subs)>0:
-        edit(); startEdit()
-        try:
-            cd('/JMSSystemResources/'+mname)
-            for sd in subs.keys():
-                if not ls('SubDeployments/'+sd, returnMap='true'): cmo.createSubDeployment(sd)
-                cd('SubDeployments/'+sd)
-                from jarray import array as jarrayArray
-                set('Targets', jarrayArray(_map_targets(subs[sd]), ObjectName))
-                cd('..')
-        except: pass
-        save(); activate(block='true')
+-rw-   CompatibilityName                            null
+-r--   DynamicallyCreated                           false
+-r--   Id                                           0
+-rw-   ModuleType                                   null
+-rw-   Name                                         wlsbJMSServer
+-rw-   Notes                                        null
+-rw-   Tags                                         null
+-r--   Type                                         SubDeployment
+-rw-   Untargeted                                   false
 
-    # create resources if present (your current manifest has none, so this is a no-op)
-    try:
-        edit(); startEdit()
-        cd('/JMSSystemResources/'+mname+'/JmsResource/'+mname)
-    except:
-        try:
-            cd('/JMSSystemResources/'+mname); cmo.createJmsResource(mname)
-            cd('/JMSSystemResources/'+mname+'/JmsResource/'+mname)
-        except: pass
+-r-x   addTag                                       Boolean : String(tag)
+-r-x   addTarget                                    Void : WebLogicMBean(target)
+-r-x   freezeCurrentValue                           Void : String(attributeName)
+-r-x   getInheritedProperties                       String[] : String[](propertyNames)
+-r-x   isInherited                                  Boolean : String(propertyName)
+-r-x   isSet                                        Boolean : String(propertyName)
+-r-x   removeTag                                    Boolean : String(tag)
+-r-x   removeTarget                                 Void : WebLogicMBean(target)
+-r-x   restoreDefaultValue                          Void : String(attributeName)
+-r-x   unSet                                        Void : String(propertyName)
 
-    # CFs
-    for cf in mod.get('connectionFactories', []):
-        try:
-            nm=cf.get('name'); jndi=cf.get('jndi')
-            if not ls('ConnectionFactories/'+nm, returnMap='true'):
-                cmo.createConnectionFactory(nm)
-                cd('ConnectionFactories/'+nm)
-                if jndi: cmo.setJNDIName(jndi)
-                cd('..')
-        except: pass
-    # Queues
-    for q in mod.get('queues', []):
-        try:
-            nm=q.get('name'); jndi=q.get('jndi'); sd=q.get('subdeployment')
-            if not ls('Queues/'+nm, returnMap='true'):
-                cmo.createQueue(nm)
-                cd('Queues/'+nm)
-                if jndi: cmo.setJNDIName(jndi)
-                if sd:   cmo.setSubDeploymentName(sd)
-                cd('..')
-        except: pass
-    # Topics
-    for t in mod.get('topics', []):
-        try:
-            nm=t.get('name'); jndi=t.get('jndi'); sd=t.get('subdeployment')
-            if not ls('Topics/'+nm, returnMap='true'):
-                cmo.createTopic(nm)
-                cd('Topics/'+nm)
-                if jndi: cmo.setJNDIName(jndi)
-                if sd:   cmo.setSubDeploymentName(sd)
-                cd('..')
-        except: pass
+This Exception occurred at Wed Sep 24 09:34:25 EEST 2025.
+javax.management.AttributeNotFoundException: Attribute is readonly. : com.bea:Name=DefaultDomain,Type=Domain:Targets
+Saving all your changes ...
+Saved all your changes successfully.
+Activating all your changes, this may take a while ...
+The edit lock associated with this edit session is released once the activation is completed.
+Activation completed
+Already in requested Edit Tree
 
-    try: save(); activate(block='true')
-    except: pass
+Starting an edit session ...
+Started edit session, be sure to save and activate your changes once you are done.
+This Exception occurred at Wed Sep 24 09:34:25 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=jmsResources,Type=JMSSystemResource:JmsResource
+Saving all your changes ...
+Saved all your changes successfully.
+Activating all your changes, this may take a while ... 
+The edit lock associated with this edit session is released once the activation is completed.
+Activation completed
+JMS Module: OSBAQJMSServer
+dr--   JMSResource
+dr--   Resource
+dr--   SubDeployments
+dr--   Targets
 
-def _import_osb_if_any(path_jar):
-    if not (path_jar and os.path.exists(path_jar)):
-        print 'OSB jar not found -> skip'
-        return
-    try:
-        from com.bea.wli.sb.management.configuration import ALSBConfigurationMBean
-        alsb = findService(ALSBConfigurationMBean.NAME, ALSBConfigurationMBean.TYPE)
-        if alsb is None:
-            print 'ALSB MBean not available in this WLST; skip OSB import.'
-            return
-        print 'Importing OSB JAR:', path_jar
-        try:
-            alsb.importToDomain(path_jar, True)  # some 12c builds
-        except:
-            try:
-                # fallback session-based import if available in your environment
-                # (commented; many Integrated domains lack this)
-                pass
-            except:
-                print '  OSB import method not supported here.'
-    except:
-        print '  OSB APIs not present; skipping.'
+-rw-   CompatibilityName                            null
+-rw-   DeploymentOrder                              100
+-rw-   DeploymentPrincipalName                      null
+-r--   DescriptorFileName                           jms/osbAQResources-jms.xml
+-r--   DynamicallyCreated                           false
+-r--   Id                                           0
+-rw-   ModuleType                                   null
+-rw-   Name                                         OSBAQJMSServer
+-rw-   Notes                                        null
+-rw-   SourcePath                                   ./config/jms/osbAQResources-jms.xml
+-rw-   Tags                                         null
+-r--   Type                                         JMSSystemResource
 
-# --- run ---------------------------------------------------------------------
-def main():
-    connect(ADMIN_USER, ADMIN_PASS, ADMIN_URL)
-    domainConfig()
+-r-x   addTag                                       Boolean : String(tag)
+-r-x   addTarget                                    Void : WebLogicMBean(target)
+-r-x   freezeCurrentValue                           Void : String(attributeName)
+-r-x   getInheritedProperties                       String[] : String[](propertyNames)
+-r-x   isInherited                                  Boolean : String(propertyName)
+-r-x   isSet                                        Boolean : String(propertyName)
+-r-x   removeTag                                    Boolean : String(tag)
+-r-x   removeTarget                                 Void : WebLogicMBean(target)
+-r-x   restoreDefaultValue                          Void : String(attributeName)
+-r-x   unSet                                        Void : String(propertyName)
 
-    man = _load_manifest(MANIFEST)
+Already in requested Edit Tree
 
-    # JDBC
-    for ds in man.get('jdbc', []):
-        try: _ensure_jdbc(ds)
-        except: print '  ! JDBC error for', ds.get('name')
-
-    # JMS
-    for mod in man.get('jms', []):
-        try: _ensure_jms_module(mod)
-        except: print '  ! JMS error for', mod.get('name')
-
-    # OSB (optional)
-    _import_osb_if_any(SB_JAR)
-
-    disconnect(); exit()
-
-main()
+Starting an edit session ...
+Started edit session, be sure to save and activate your changes once you are done.
+This Exception occurred at Wed Sep 24 09:34:25 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=OSBAQJMSServer,Type=JMSSystemResource:JmsResource
+Saving all your changes ...
+Saved all your changes successfully.
+Activating all your changes, this may take a while ...
+The edit lock associated with this edit session is released once the activation is completed.
+Activation completed
+JMS Module: OSBJMSMODULE
+No stack trace available.
+  ! JMS error for OSBJMSMODULE
+OSB jar not found -> skip
+Disconnected from weblogic server: DefaultServer
 
 
-⸻
-
-What to expect with your current manifest
-	•	JDBC: creates MWDB (but you’ll still need to set user/password once on local).
-	•	JMS:
-	•	Creates OSBJMSMODULE and its subdeployments (qPushNotifications, qLogSGBL, …) targeted to OSBJMS (mapped to your local server via FALLBACK_SERVER if needed).
-	•	Your manifest lists no queues/topics/CFs—so the script won’t create any. If you want those, we must enhance the exporter to include Uniform Distributed Destinations (UDQ/UDT) and SAF, if that’s what you use.
-
-If you want me to update the exporter to capture:
-	•	UniformDistributedQueues / UniformDistributedTopics
-	•	ForeignServers + Foreign Dests/CFs
-	•	SAFImportedDestinations / SAFAgents
-
-say the word and I’ll give you the drop-in upgrade so the next export includes them.
+Exiting WebLogic Scripting Tool.
