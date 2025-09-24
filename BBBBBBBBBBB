@@ -1,8 +1,133 @@
-if pname in ('DataSourceName', 'xADataSourceName'):
-    if pval is None:
-        entry[pname] = None
-    else:
-        try:
-            entry[pname] = str(pval)
-        except:
-            entry[pname] = "%s" % pval
+PS C:\Users\CKhadra\Desktop\scripts> C:\DevTools\Jdev\oracle_common\common\bin\wlst.cmd .\clone_jdbc_and_hook_dbadapter.py
+
+Initializing WebLogic Scripting Tool (WLST) ...
+
+Welcome to WebLogic Server Administration Scripting Shell
+
+Type help() for help on available commands
+
+
+[10:10:39] >>> DEV: export JDBC and DbAdapter links
+[10:10:39] Connecting to DEV: t3://uat-osb1.sgbl.com.lb:7601
+Connecting to t3://uat-osb1.sgbl.com.lb:7601 with userid ckhadra ...
+Successfully connected to Admin Server "AdminServer" that belongs to domain "bbdev_domain".
+
+Warning: An insecure protocol was used to connect to the server.
+To ensure on-the-wire security, the SSL port or Admin port should be used instead.
+
+Location changed to domainConfig tree. This is a read-only tree
+with DomainMBean as the root MBean.
+For more help, use help('domainConfig')
+
+[10:10:39] Connected to DEV and in domainConfig
+This Exception occurred at Wed Sep 24 10:10:39 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=WLSSchemaDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=WLSSchemaDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=LocalSvcTblDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=LocalSvcTblDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=opss-data-source,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=opss-data-source,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=opss-audit-viewDS,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=opss-audit-viewDS,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=opss-audit-DBDS,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=opss-audit-DBDS,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=mds-owsm,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=mds-owsm,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=OraSDPMDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:40 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=OraSDPMDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=wlsbjmsrpDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=wlsbjmsrpDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=SOADataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=SOADataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=SOALocalTxDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=SOALocalTxDataSource,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=MWDB,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+This Exception occurred at Wed Sep 24 10:10:41 EEST 2025.
+javax.management.AttributeNotFoundException: com.bea:Name=MWDB,Location=bbdev_domain,Type=JDBCSystemResource:JdbcResource
+dr--   SubDeployments
+dr--   Targets
+
+-r--   AbsoluteAltDescriptorDir                     null
+-r--   AbsoluteAltDescriptorPath                    null
+-r--   AbsoluteInstallDir                           null
+-r--   AbsolutePlanDir                              null
+-r--   AbsolutePlanPath                             /u01/app/oracle/product/12.2.1.4/soa/soa/connectors/DB_BB_DEV_Plan.xml
+-r--   AbsoluteSourcePath                           /u01/app/oracle/product/12.2.1.4/soa/soa/connectors/DbAdapter.rar
+-r--   AltDescriptorDir                             null
+-r--   ApplicationIdentifier                        DbAdapter
+-r--   ApplicationName                              DbAdapter
+-r--   CacheInAppDirectory                          false
+-r--   CompatibilityName                            null
+-r--   DeploymentOrder                              100
+-r--   DeploymentPlan                               [B@3478b6a0
+-r--   DeploymentPlanExternalDescriptors            null
+-r--   DeploymentPrincipalName                      null
+-r--   DynamicallyCreated                           false
+-r--   Id                                           0
+-r--   InstallDir                                   null
+-r--   ModuleType                                   rar
+-r--   Name                                         DbAdapter
+-r--   Notes                                        null
+-r--   ParallelDeployModules                        false
+-r--   PlanDir                                      null
+-r--   PlanPath                                     /u01/app/oracle/product/12.2.1.4/soa/soa/connectors/DB_BB_DEV_Plan.xml
+-r--   PlanStagingMode                              null
+-r--   SecurityDDModel                              DDOnly
+-r--   SourcePath                                   /u01/app/oracle/product/12.2.1.4/soa/soa/connectors/DbAdapter.rar
+-r--   StagingMode                                  nostage
+-r--   Tags                                         null
+-r--   Type                                         AppDeployment
+-r--   Untargeted                                   false
+-r--   ValidateDDSecurityData                       false
+-r--   VersionIdentifier                            null
+
+-r-x   freezeCurrentValue                           Void : String(attributeName)
+-r-x   getInheritedProperties                       String[] : String[](propertyNames)
+-r-x   isInherited                                  Boolean : String(propertyName)
+-r-x   isSet                                        Boolean : String(propertyName)
+-r-x   unSet                                        Void : String(propertyName)
+
+[10:10:42] Warning: could not read DbAdapter plan on DEV
+Disconnected from weblogic server: AdminServer
+[10:10:42] Disconnected from DEV
+[10:10:42] DEV JDBC count: 11
+[10:10:42] DEV DbAdapter CI entries: 0
+
+[10:10:42] >>> LOCAL: connect
+Connecting to t3://localhost:7101 with userid weblogic ...
+Successfully connected to Admin Server "DefaultServer" that belongs to domain "DefaultDomain".
+
+Warning: An insecure protocol was used to connect to the server.
+To ensure on-the-wire security, the SSL port or Admin port should be used instead.
+
+
+[10:10:47] Connected to LOCAL and in domainConfig
+[10:10:47] JDBC: WLSSchemaDataSource
+No stack trace available.
+Problem invoking WLST - Traceback (innermost last):
+  File "C:\Users\CKhadra\Desktop\scripts\clone_jdbc_and_hook_dbadapter.py", line 483, in ?
+  File "C:\Users\CKhadra\Desktop\scripts\clone_jdbc_and_hook_dbadapter.py", line 469, in main
+  File "C:\Users\CKhadra\Desktop\scripts\clone_jdbc_and_hook_dbadapter.py", line 248, in local_create_jdbc
+  File "<iostream>", line 819, in ls
+  File "<iostream>", line 553, in raiseWLSTException
+WLSTException: Error cding to the MBean
