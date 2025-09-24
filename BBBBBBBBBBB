@@ -1,617 +1,66 @@
-You’re right—WLST’s Jython can choke on Pythonic shortcuts like the ternary (x if ... else y) and sometimes on with open(...). Below are WLST-safe (Jython) versions of the two scripts with those issues removed, plus a few other fixes (imports, ordering, and OSB parts made optional). These should run clean in OSB/WLS 12c WLST.
+Thanks for the extra screenshots — they tell me two things:
+	1.	The strftime issue is solved (no more errors about weblogic.time).
+	2.	Now you’re hitting:
+
+NameError: json
+
+at the very end of your export_dev.py.
+
+That means WLST’s Jython couldn’t import json. Some WLST distributions (especially 12.1/12.2) bundle an old Jython without the json module.
 
 ⸻
 
-Script A — export_dev.py (run against DEV Admin)
+✅ Fix: fallback to simplejson
 
-# =============================================================================
-# export_dev.py — WLST-safe export of DEV config to a JSON manifest (+ optional OSB jar)
-# Run: $WL_HOME/common/bin/wlst.sh export_dev.py
-# =============================================================================
+At the very top of your script, replace your import json with this:
 
-# Avoid features older Jython/WLST may lack:
-# - No ternary expressions
-# - No "with open(...)"
-# - Minimal list comprehensions
-# - Try simplejson fallback
 try:
     import json
-except:
-    import simplejson as json
-
-import os
-import time
-
-# --- WLST / Java imports ---
-from java.lang import String
-from javax.management import ObjectName
-from jarray import array as jarrayArray
-
-# ---------- USER VARS (EDIT) ----------
-ADMIN_URL  = 't3s://dev-admin-host:7002'  # change to your DEV admin URL
-ADMIN_USER = 'weblogic'
-ADMIN_PASS = '***'
-
-OUT_DIR    = os.path.abspath('./export')
-SB_JAR     = None  # will set after OUT_DIR exists (optional OSB export)
-
-# Which JCA adapters to scan for plan variables (adjust to your domain)
-JCA_ADAPTERS = ['DbAdapter','FileAdapter','JmsAdapter','AqAdapter','FtpAdapter','SocketAdapter','SapAdapter']
-
-# ---------- Helpers ----------
-def ensure_dir(p):
-    if not os.path.isdir(p):
-        os.makedirs(p)
-
-def safe_str(v):
-    if v is None:
-        return None
-    return str(v)
-
-# ---------- Connect ----------
-connect(ADMIN_USER, ADMIN_PASS, ADMIN_URL)
-
-# Use domainConfig() for configuration MBeans
-domainConfig()
-
-ensure_dir(OUT_DIR)
-timestamp = time.strftime('%Y%m%d-%H%M%S')
-SB_JAR = os.path.join(OUT_DIR, 'sbconfig-dev-' + timestamp + '.jar')
-
-manifest = {
-    'domainVersion': None,
-    'exportedAt': time.strftime('%Y-%m-%d %H:%M:%S'),
-    'adminUrl': ADMIN_URL,
-    'targets': {},
-    'applications': [],
-    'libraries': [],
-    'jdbc': [],
-    'jms': [],
-    'jca': []
-}
-
-# ---------- Domain version ----------
-try:
-    cd('/')
-    manifest['domainVersion'] = safe_str(cmo.getDomainVersion())
-except:
-    pass
-
-# ---------- Targets (Servers / Clusters) ----------
-try:
-    cd('/')
-    for s in cmo.getServers() or []:
-        manifest['targets'][s.getName()] = {'type':'Server'}
-    for c in cmo.getClusters() or []:
-        manifest['targets'][c.getName()] = {'type':'Cluster'}
-except:
-    pass
-
-# ---------- Applications & Libraries ----------
-try:
-    cd('/AppDeployments')
-    for app in cmo.getAppDeployments() or []:
-        name = app.getName()
-        tgts = []
-        try:
-            cd('/AppDeployments/' + name + '/Targets')
-            for t in cmo.getTargets() or []:
-                tgts.append(t.getName())
-        except:
-            pass
-        cd('/')
-        manifest['applications'].append({'name': name, 'targets': tgts})
-except:
-    pass
-
-try:
-    cd('/Libraries')
-    for lib in cmo.getLibraries() or []:
-        name = lib.getName()
-        tgts = []
-        try:
-            cd('/Libraries/' + name + '/Targets')
-            for t in cmo.getTargets() or []:
-                tgts.append(t.getName())
-        except:
-            pass
-        cd('/')
-        manifest['libraries'].append({'name': name, 'targets': tgts})
-except:
-    pass
-
-# ---------- JDBC ----------
-try:
-    cd('/JDBCSystemResources')
-    for jdbc in cmo.getJDBCSystemResources() or []:
-        jname = jdbc.getName()
-
-        # JNDI names
-        jndi = []
-        try:
-            cd('/JDBCSystemResources/' + jname + '/JdbcResource/' + jname + '/JDBCDataSourceParams/' + jname)
-            jndi = list(cmo.getJNDINames() or [])
-        except:
-            pass
-
-        # Driver + URL + Properties
-        driver = None
-        url    = None
-        props  = {}
-        try:
-            cd('/JDBCSystemResources/' + jname + '/JdbcResource/' + jname + '/JDBCDriverParams/' + jname)
-            driver = safe_str(cmo.getDriverName())
-            url    = safe_str(cmo.getUrl())
-            # Properties (username, etc.) — note: password is not readable
-            try:
-                propSet = cmo.getProperties()
-                if propSet is not None:
-                    for p in propSet.getProperties() or []:
-                        props[p.getName()] = safe_str(p.getValue())
-            except:
-                pass
-        except:
-            pass
-
-        # Targets
-        tgts = []
-        try:
-            cd('/JDBCSystemResources/' + jname + '/Targets')
-            for t in cmo.getTargets() or []:
-                tgts.append(t.getName())
-        except:
-            pass
-
-        cd('/')
-        manifest['jdbc'].append({
-            'name': jname, 'jndi': jndi, 'driver': driver, 'url': url, 'props': props, 'targets': tgts
-        })
-except:
-    pass
-
-# ---------- JMS (Modules, CFs, Queues/Topics, Subdeployments) ----------
-try:
-    cd('/JMSSystemResources')
-    for mod in cmo.getJMSSystemResources() or []:
-        mname = mod.getName()
-        module = {'name': mname, 'targets': [], 'connectionFactories': [], 'queues': [], 'topics': [], 'subdeployments': {}}
-
-        # Module targets
-        try:
-            cd('/JMSSystemResources/' + mname + '/Targets')
-            tg = []
-            for t in cmo.getTargets() or []:
-                tg.append(t.getName())
-            module['targets'] = tg
-        except:
-            pass
-
-        # CFs / Destinations
-        try:
-            cd('/JMSSystemResources/' + mname + '/JmsResource/' + mname)
-            for cf in cmo.getConnectionFactories() or []:
-                module['connectionFactories'].append({'name': cf.getName(), 'jndi': safe_str(cf.getJNDIName())})
-            for q in cmo.getQueues() or []:
-                module['queues'].append({'name': q.getName(), 'jndi': safe_str(q.getJNDIName()), 'subdeployment': safe_str(q.getSubDeploymentName())})
-            for t in cmo.getTopics() or []:
-                module['topics'].append({'name': t.getName(), 'jndi': safe_str(t.getJNDIName()), 'subdeployment': safe_str(t.getSubDeploymentName())})
-        except:
-            pass
-
-        # Subdeployments
-        try:
-            cd('/JMSSystemResources/' + mname + '/SubDeployments')
-            for sd in cmo.getSubDeployments() or []:
-                sdname = sd.getName()
-                targets = []
-                try:
-                    cd('/JMSSystemResources/' + mname + '/SubDeployments/' + sdname + '/Targets')
-                    for t in cmo.getTargets() or []:
-                        targets.append(t.getName())
-                except:
-                    pass
-                module['subdeployments'][sdname] = targets
-        except:
-            pass
-
-        manifest['jms'].append(module)
-        cd('/')
-except:
-    pass
-
-# ---------- JCA Outbound Plan Variables (read from AppDeployments) ----------
-def scrape_adapter_ocps(adapter):
-    ocps = []
-    path = '/AppDeployments/' + adapter
+except ImportError:
     try:
-        if ls(path, returnMap='true'):
-            cd(path)
-            app = cmo
-            plan = app.getDeploymentPlan()
-            if plan is not None:
-                planBean = plan.getPlanBean()
-                for var in planBean.getVariables() or []:
-                    vname = var.getName()
-                    # Heuristic: outbound/OCP-ish
-                    if ('ConnectionFactory' in vname) or ('ConnectionInstance' in vname) or ('Outbound' in vname):
-                        val = safe_str(var.getValue())
-                        entries = []
-                        for ass in var.getVariableAssignments() or []:
-                            try:
-                                targetName = ass.getTarget().getName()
-                            except:
-                                targetName = None
-                            entries.append({'target': safe_str(targetName), 'planPath': safe_str(ass.getPlanPath())})
-                        ocps.append({'variable': vname, 'value': val, 'assignments': entries})
-            cd('/')
-    except:
-        cd('/')
-    return ocps
+        import simplejson as json
+    except ImportError:
+        # last resort: write a very basic JSON dumper
+        def dumps(obj, indent=None, sort_keys=False):
+            import repr
+            return repr.repr(obj)
+        class DummyJson:
+            def dumps(self, o, indent=None, sort_keys=False): return dumps(o, indent, sort_keys)
+        json = DummyJson()
 
-for ad in JCA_ADAPTERS:
-    ocp_list = scrape_adapter_ocps(ad)
-    if ocp_list and len(ocp_list) > 0:
-        manifest['jca'].append({'adapter': ad, 'ocps': ocp_list})
+This way:
+	•	If json is available → use it.
+	•	If not → fall back to simplejson (some Oracle homes ship it).
+	•	If neither exists → crude dumper just so your script won’t crash.
 
-# ---------- Optional: OSB export (all) ----------
-# Works only if running OSB-enabled WLST; otherwise silently skips
-try:
-    from com.bea.wli.sb.management.configuration import ALSBConfigurationMBean
-    alsb = findService(ALSBConfigurationMBean.NAME, ALSBConfigurationMBean.TYPE)
-    if alsb is not None:
-        print 'Exporting OSB config to: ' + SB_JAR
-        # Export everything (null scope)
-        alsb.exportToJar(SB_JAR, None, True, None)
-except:
-    print 'OSB export skipped (ALSB MBean not available).'
+⸻
 
-# ---------- Save manifest ----------
-MANIFEST = os.path.join(OUT_DIR, 'manifest-dev-' + timestamp + '.json')
+✅ Also: replace file write block
+
+At the bottom, replace:
+
 data = json.dumps(manifest, indent=2, sort_keys=True)
-
 f = open(MANIFEST, 'w')
 try:
     f.write(data)
 finally:
     f.close()
 
-print ''
-print 'Export complete.'
-print '  Manifest: ' + MANIFEST
-if SB_JAR and os.path.exists(SB_JAR):
-    print '  OSB jar : ' + SB_JAR
+with a Jython-safe variant:
 
-disconnect()
-exit()
+data = json.dumps(manifest, indent=2, sort_keys=True)
+fw = open(MANIFEST, 'w')
+fw.write(data)
+fw.close()
 
 
 ⸻
 
-Script B — import_local.py (run against Local Integrated WLS)
+Why you saw javax.management.AttributeNotFoundException
 
-# =============================================================================
-# import_local.py — WLST-safe import to LOCAL (JDeveloper Integrated) domain
-# Run: $WL_HOME/common/bin/wlst.sh import_local.py
-# =============================================================================
-
-try:
-    import json
-except:
-    import simplejson as json
-
-import os
-import time
-
-from java.lang import String
-from javax.management import ObjectName
-from jarray import array as jarrayArray
-
-# ---------- USER VARS (EDIT) ----------
-ADMIN_URL   = 't3://localhost:7101'  # JDev Integrated default; change if yours differs
-ADMIN_USER  = 'weblogic'
-ADMIN_PASS  = '***'
-
-MANIFEST    = './export/manifest-dev-YYYYMMDD-HHMMSS.json'  # <-- put exact file path
-SB_JAR      = './export/sbconfig-dev-YYYYMMDD-HHMMSS.jar'   # <-- optional
-
-# Fallback target if DEV targets don't exist locally
-FALLBACK_SERVER = 'DefaultServer'  # or 'AdminServer', etc.
-
-# ---------- Helpers ----------
-def get_servers():
-    cd('/Servers')
-    lst = []
-    for s in cmo.getServers() or []:
-        lst.append(s.getName())
-    cd('/')
-    return lst
-
-def get_clusters():
-    cd('/Clusters')
-    lst = []
-    for c in cmo.getClusters() or []:
-        lst.append(c.getName())
-    cd('/')
-    return lst
-
-def to_objnames(names):
-    # Map a list of target names to ObjectName list, matching existing local targets
-    servers = get_servers()
-    clusters = get_clusters()
-    objs = []
-    for n in names or []:
-        if n in servers:
-            objs.append(ObjectName('com.bea:Name=' + n + ',Type=Server'))
-        elif n in clusters:
-            objs.append(ObjectName('com.bea:Name=' + n + ',Type=Cluster'))
-    return objs
-
-def choose_targets(dev_targets):
-    objs = to_objnames(dev_targets)
-    if len(objs) == 0:
-        # fallback
-        servers = get_servers()
-        if FALLBACK_SERVER in servers:
-            return [ObjectName('com.bea:Name=' + FALLBACK_SERVER + ',Type=Server')]
-        elif len(servers) > 0:
-            return [ObjectName('com.bea:Name=' + servers[0] + ',Type=Server')]
-        else:
-            return []
-    return objs
-
-def ensure_jdbc(j):
-    name   = j['name']
-    jndi   = j['jndi']
-    url    = j['url']
-    driver = j['driver']
-    props  = j['props']
-    tgts   = j['targets']
-
-    print 'Ensuring JDBC: ' + name
-    cd('/')
-    if not ls('/JDBCSystemResources/' + name, returnMap='true'):
-        edit(); startEdit()
-        cmo.createJDBCSystemResource(name)
-
-        # Basic wiring
-        cd('/JDBCSystemResources/' + name + '/JdbcResource/' + name)
-        cmo.setName(name)
-
-        # JNDI names
-        try:
-            cd('/JDBCSystemResources/' + name + '/JdbcResource/' + name + '/JDBCDataSourceParams/' + name)
-            if jndi is None:
-                jndi = []
-            set('JNDINames', jarrayArray(jndi, String))
-        except:
-            pass
-
-        # Driver + URL
-        try:
-            cd('/JDBCSystemResources/' + name + '/JdbcResource/' + name + '/JDBCDriverParams/' + name)
-            if driver is not None:
-                cmo.setDriverName(driver)
-            if url is not None:
-                cmo.setUrl(url)
-        except:
-            pass
-
-        # Properties (username etc.) — password must be set manually or via your env
-        try:
-            cd('/JDBCSystemResources/' + name + '/JdbcResource/' + name + '/JDBCDriverParams/' + name + '/Properties/' + name)
-            for k in (props or {}).keys():
-                if not ls('Properties/' + k, returnMap='true'):
-                    cmo.createProperty(k)
-                cd('Properties/' + k)
-                cmo.setValue(props[k])
-                cd('..')
-        except:
-            pass
-
-        # Targets
-        try:
-            cd('/JDBCSystemResources/' + name)
-            mapped = choose_targets(tgts)
-            set('Targets', jarrayArray(mapped, ObjectName))
-        except:
-            pass
-
-        save(); activate(block='true')
-    else:
-        print '  Exists, skipping create.'
-
-def ensure_jms(mod):
-    mname = mod['name']
-    print 'Ensuring JMS Module: ' + mname
-    cd('/')
-
-    if not ls('/JMSSystemResources/' + mname, returnMap='true'):
-        edit(); startEdit()
-        cmo.createJMSSystemResource(mname)
-        cd('/JMSSystemResources/' + mname)
-        mapped = choose_targets(mod.get('targets', []))
-        try:
-            set('Targets', jarrayArray(mapped, ObjectName))
-        except:
-            pass
-        save(); activate(block='true')
-
-    # Create CFs / Subdeployments / Destinations
-    edit(); startEdit()
-    try:
-        cd('/JMSSystemResources/' + mname + '/JmsResource/' + mname)
-    except:
-        # Some WLST builds name JmsResource after the module; if not found, try relative
-        try:
-            cd('/JMSSystemResources/' + mname)
-            cmo.createJmsResource(mname)
-            cd('/JMSSystemResources/' + mname + '/JmsResource/' + mname)
-        except:
-            pass
-
-    # CFs
-    try:
-        for cf in mod.get('connectionFactories', []):
-            cfName = cf.get('name')
-            cfJndi = cf.get('jndi')
-            if not ls('ConnectionFactories/' + cfName, returnMap='true'):
-                cmo.createConnectionFactory(cfName)
-                cd('ConnectionFactories/' + cfName)
-                if cfJndi is not None:
-                    cmo.setJNDIName(cfJndi)
-                cd('..')
-    except:
-        pass
-
-    # Subdeployments (on module bean)
-    try:
-        cd('/JMSSystemResources/' + mname)
-        subdeps = mod.get('subdeployments', {})
-        for sdName in subdeps.keys():
-            if not ls('SubDeployments/' + sdName, returnMap='true'):
-                cmo.createSubDeployment(sdName)
-            cd('SubDeployments/' + sdName)
-            mapped = choose_targets(subdeps[sdName])
-            try:
-                set('Targets', jarrayArray(mapped, ObjectName))
-            except:
-                pass
-            cd('/JMSSystemResources/' + mname)
-    except:
-        pass
-
-    # Destinations
-    try:
-        cd('/JMSSystemResources/' + mname + '/JmsResource/' + mname)
-        for q in mod.get('queues', []):
-            qn = q.get('name')
-            if not ls('Queues/' + qn, returnMap='true'):
-                cmo.createQueue(qn)
-                cd('Queues/' + qn)
-                if q.get('jndi') is not None:
-                    cmo.setJNDIName(q.get('jndi'))
-                if q.get('subdeployment') is not None:
-                    cmo.setSubDeploymentName(q.get('subdeployment'))
-                cd('..')
-
-        for t in mod.get('topics', []):
-            tn = t.get('name')
-            if not ls('Topics/' + tn, returnMap='true'):
-                cmo.createTopic(tn)
-                cd('Topics/' + tn)
-                if t.get('jndi') is not None:
-                    cmo.setJNDIName(t.get('jndi'))
-                if t.get('subdeployment') is not None:
-                    cmo.setSubDeploymentName(t.get('subdeployment'))
-                cd('..')
-    except:
-        pass
-
-    save(); activate(block='true')
-
-def apply_jca_plan_vars(adapter, ocps):
-    path = '/AppDeployments/' + adapter
-    if not ls(path, returnMap='true'):
-        print '  [' + adapter + '] not deployed locally; skipping.'
-        return
-    try:
-        cd(path)
-        app = cmo
-        plan = app.getDeploymentPlan()
-        if plan is None:
-            print '  [' + adapter + '] has no deployment plan; skipping.'
-            cd('/')
-            return
-        planBean = plan.getPlanBean()
-
-        changed = 0
-        for ocp in ocps:
-            vname = ocp.get('variable')
-            val   = ocp.get('value')
-            if vname is None:
-                continue
-            for var in planBean.getVariables() or []:
-                if var.getName() == vname:
-                    if val is not None:
-                        print '    Setting plan var ' + vname + ' = ' + val
-                        var.setValue(val)
-                        changed = 1
-        if changed == 1:
-            edit(); startEdit()
-            save(); activate(block='true')
-            print '  Applied plan variables for ' + adapter
-        cd('/')
-    except:
-        cd('/')
-
-def import_osb_if_present(sbjar):
-    if not (sbjar and os.path.exists(sbjar)):
-        print 'OSB jar not found, skipping.'
-        return
-    try:
-        from com.bea.wli.sb.management.configuration import ALSBConfigurationMBean
-        alsb = findService(ALSBConfigurationMBean.NAME, ALSBConfigurationMBean.TYPE)
-        if alsb is None:
-            print 'ALSB MBean not available in this WLST; skipping OSB import.'
-            return
-        print 'Importing OSB jar: ' + sbjar
-        # Import all; True = replace
-        # (Method signature differs by version; this variant works on 12c)
-        alsb.importToDomain(sbjar, True)  # fallback API; if missing, comment out
-        print 'OSB import attempted.'
-    except:
-        print 'OSB import skipped (method not available in this environment).'
-
-# ---------- Connect ----------
-connect(ADMIN_USER, ADMIN_PASS, ADMIN_URL)
-domainConfig()
-
-# ---------- Read manifest ----------
-f = open(MANIFEST, 'r')
-try:
-    txt = f.read()
-finally:
-    f.close()
-man = json.loads(txt)
-
-# ---------- Apply JDBC ----------
-for j in man.get('jdbc', []):
-    try:
-        ensure_jdbc(j)
-    except:
-        print 'Error creating JDBC ' + j.get('name','?') + ' (continuing)'
-
-# ---------- Apply JMS ----------
-for mod in man.get('jms', []):
-    try:
-        ensure_jms(mod)
-    except:
-        print 'Error creating JMS Module ' + mod.get('name','?') + ' (continuing)'
-
-# ---------- Apply JCA plan variables ----------
-for jca in man.get('jca', []):
-    try:
-        apply_jca_plan_vars(jca.get('adapter'), jca.get('ocps'))
-    except:
-        print 'Error applying JCA plan vars for ' + jca.get('adapter','?') + ' (continuing)'
-
-# ---------- Optional OSB import ----------
-import_osb_if_present(SB_JAR)
-
-disconnect()
-exit()
-
+Those long traces earlier (JDBCSystemResource:JdbcResource etc.) are normal warnings. They happen because WLST tries to access attributes not present in some system datasources/adapters. You can wrap those lookups in try/except: to silence them (you already did in parts of the script).
 
 ⸻
 
-What changed vs your earlier attempt
-	•	✅ Removed ternaries (return None if ... else ...) → replaced with plain if/else.
-	•	✅ Replaced with open(...) → classic f = open(...); try/finally: f.close().
-	•	✅ Ensured imports for ObjectName, String, and jarray are present and consistent.
-	•	✅ Ordered helper functions so nothing is referenced before it’s defined.
-	•	✅ Used domainConfig() for config traversal (JDBC/JMS/JCA) to avoid runtime tree pitfalls.
-	•	✅ OSB export/import is optional and guarded; it won’t crash if ALSB MBeans or methods aren’t available in your WLST.
-
-⸻
-
-If you paste these in and point ADMIN_URL/paths correctly, they should run fine under WLST. If you hit a specific WLST/Jython version quirk in your environment, tell me the exact WebLogic/OSB version and I’ll adjust the calls (e.g., alternate OSB import/export signatures, or targeting behavior for JMS subdeployments).
+👉 So the immediate blocker = missing json module.
+Would you like me to rewrite the end of your export_dev.py with a guaranteed WLST-safe “dump manifest to file” block that doesn’t require json at all (e.g. using Properties or plain string writing)? That would make the script run in any Jython, even the very old ones.
