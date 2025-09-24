@@ -1,12 +1,8 @@
-# do not attempt to read or set password here
-if pname is not None:
-    key = str(pname)
-    # skip any password-like property
-    if key.lower().find('password') == -1:
-        if pval is None:
-            props[key] = None
-        else:
-            try:
-                props[key] = str(pval)
-            except:
-                props[key] = "%s" % pval
+if pname in ('DataSourceName', 'xADataSourceName'):
+    if pval is None:
+        entry[pname] = None
+    else:
+        try:
+            entry[pname] = str(pval)
+        except:
+            entry[pname] = "%s" % pval
