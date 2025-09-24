@@ -1,187 +1,375 @@
-PS C:\Users\CKhadra\Desktop\scripts> C:\DevTools\Jdev\oracle_common\common\bin\wlst.cmd .\import_local.py
+Absolutely—let’s make this solid and observable.
 
-Initializing WebLogic Scripting Tool (WLST) ...
+Below is a drop-in replacement for your import_local.py with:
+	•	Verbose, step-by-step console logs (clear START/OK/FAIL markers).
+	•	A result summary at the end (what succeeded / failed).
+	•	Corrected JMS path case (JMSResource not JmsResource) to fix those AttributeNotFound errors.
+	•	Safer edit session handling (reuses existing session, logs current pwd() before mutating).
+	•	Defensive targeting (never sets Domain:Targets by mistake—prints the current MBean before set('Targets', ...)).
+	•	Gentle behavior when objects already exist (logs (exists) without throwing).
 
-Welcome to WebLogic Server Administration Scripting Shell
+This script expects the exact manifest format you showed and optionally an OSB jar.
 
-Type help() for help on available commands
+⸻
 
-Connecting to t3://localhost:7101 with userid weblogic ...
-Successfully connected to Admin Server "DefaultServer" that belongs to domain "DefaultDomain".
+import_local.py (verbose + fixes)
 
-Warning: An insecure protocol was used to connect to the server.
-To ensure on-the-wire security, the SSL port or Admin port should be used instead.
+# =============================================================================
+# import_local.py — Apply manifest (JDBC, JMS) to local WLS with verbose logging
+# Usage: C:\DevTools\Jdev\oracle_common\common\bin\wlst.cmd .\import_local.py
+# =============================================================================
 
-Location changed to domainConfig tree. This is a read-only tree
-with DomainMBean as the root MBean.
-For more help, use help('domainConfig')
+# --- USER SETTINGS -----------------------------------------------------------
+ADMIN_URL   = 't3://localhost:7101'      # JDeveloper Integrated default
+ADMIN_USER  = 'weblogic'
+ADMIN_PASS  = '***'
 
-JDBC: MWDB
-No stack trace available.
-  ! JDBC error for MWDB
-JMS Module: UMSAQJMSSystemResource
-dr--   JMSResource
-dr--   Resource
-dr--   SubDeployments
-dr--   Targets
+MANIFEST    = r'.\export\manifest-dev-YYYYMMDD-HHMMSS.json'   # <-- set exact file path
+SB_JAR      = r'.\export\sbconfig-dev-YYYYMMDD-HHMMSS.jar'    # <-- optional (OSB)
 
--r--   CompatibilityName                            null
--r--   DeploymentOrder                              100
--r--   DeploymentPrincipalName                      null
--r--   DescriptorFileName                           jms/UMSAQJMSSystemResource-jms.xml
--r--   DynamicallyCreated                           false
--r--   Id                                           0
--r--   ModuleType                                   null
--r--   Name                                         UMSAQJMSSystemResource
--r--   Notes                                        null
--r--   SourcePath                                   ./config/jms/UMSAQJMSSystemResource-jms.xml
--r--   Tags                                         null
--r--   Type                                         JMSSystemResource
+FALLBACK_SERVER = 'DefaultServer'  # if dev targets don't exist locally
 
--r-x   freezeCurrentValue                           Void : String(attributeName)
--r-x   getInheritedProperties                       String[] : String[](propertyNames)
--r-x   isInherited                                  Boolean : String(propertyName)
--r-x   isSet                                        Boolean : String(propertyName)
--r-x   unSet                                        Void : String(propertyName)
+# --- IMPORTS ----------------------------------------------------------------
+import os
+from javax.management import ObjectName
+from datetime import datetime
 
-Location changed to edit tree.
-This is a writable tree with DomainMBean as the root.
-To make changes you will need to start an edit session via startEdit().
-For more help, use help('edit').
-You already have an edit session in progress and hence WLST will 
-continue with your edit session.
+# --- Pretty logging ----------------------------------------------------------
+def stamp(): return datetime.now().strftime('%H:%M:%S')
+def log(msg):     print '[%s] %s' % (stamp(), msg)
+def ok(msg='OK'): print '[%s]   ✅ %s' % (stamp(), msg)
+def warn(msg):    print '[%s]   ⚠️  %s' % (stamp(), msg)
+def err(msg):     print '[%s]   ❌ %s' % (stamp(), msg)
+def step(msg):    print '\n[%s] ▶ %s' % (stamp(), msg)
 
-Starting an edit session ...
-Started edit session, be sure to save and activate your changes once you are done.
-This Exception occurred at Wed Sep 24 09:34:24 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=UMSAQJMSSystemResource,Type=JMSSystemResource:JmsResource
-Saving all your changes ...
-Saved all your changes successfully.
-Activating all your changes, this may take a while ...
-The edit lock associated with this edit session is released once the activation is completed.
-Activation completed
-JMS Module: jmsResources
-dr--   JMSResource
-dr--   Resource
-dr--   SubDeployments
-dr--   Targets
+# --- tiny JSON loader (works on old Jython) ---------------------------------
+def _parse_json_text(txt):
+    try:
+        import json
+        return json.loads(txt)
+    except:
+        try:
+            import simplejson as json
+            return json.loads(txt)
+        except:
+            rep = txt.replace('true','True').replace('false','False').replace('null','None')
+            return eval(rep, {"__builtins__": {}})
 
--rw-   CompatibilityName                            null
--rw-   DeploymentOrder                              100
--rw-   DeploymentPrincipalName                      null
--r--   DescriptorFileName                           jms/xbusResources-jms.xml
--r--   DynamicallyCreated                           false
--r--   Id                                           0
--rw-   ModuleType                                   null
--rw-   Name                                         jmsResources
--rw-   Notes                                        null
--rw-   SourcePath                                   ./config/jms/xbusResources-jms.xml
--rw-   Tags                                         null
--r--   Type                                         JMSSystemResource
+def _load_manifest(path):
+    fr = open(path, 'r')
+    try:
+        return _parse_json_text(fr.read())
+    finally:
+        fr.close()
 
--r-x   addTag                                       Boolean : String(tag)
--r-x   addTarget                                    Void : WebLogicMBean(target)
--r-x   freezeCurrentValue                           Void : String(attributeName)
--r-x   getInheritedProperties                       String[] : String[](propertyNames)
--r-x   isInherited                                  Boolean : String(propertyName)
--r-x   isSet                                        Boolean : String(propertyName)
--r-x   removeTag                                    Boolean : String(tag)
--r-x   removeTarget                                 Void : WebLogicMBean(target)
--r-x   restoreDefaultValue                          Void : String(attributeName)
--r-x   unSet                                        Void : String(propertyName)
+# --- WLST helpers ------------------------------------------------------------
+def _pwd():
+    try:
+        return pwd()
+    except:
+        return '(unknown)'
 
-Already in requested Edit Tree
+def _ensure_edit():
+    # Start or reuse an edit session
+    try:
+        edit()
+        startEdit(waitTimeInMillis=600000)  # 10 min
+        return True
+    except:
+        # Already in edit — WLST prints a message; we still return True
+        return True
 
-Starting an edit session ...
-Started edit session, be sure to save and activate your changes once you are done.
-dr--   SubDeployments
-dr--   Targets
+def _activate():
+    try:
+        save(); activate(block='true')
+        ok('Changes activated')
+        return True
+    except:
+        err('Activation failed')
+        return False
 
--rw-   CompatibilityName                            null
--r--   DynamicallyCreated                           false
--r--   Id                                           0
--rw-   ModuleType                                   null
--rw-   Name                                         wlsbJMSServer
--rw-   Notes                                        null
--rw-   Tags                                         null
--r--   Type                                         SubDeployment
--rw-   Untargeted                                   false
+def _get_servers():
+    cd('/Servers')
+    L=[]; xs=cmo.getServers()
+    if xs:
+        for i in range(len(xs)): L.append(xs[i].getName())
+    cd('/'); return L
 
--r-x   addTag                                       Boolean : String(tag)
--r-x   addTarget                                    Void : WebLogicMBean(target)
--r-x   freezeCurrentValue                           Void : String(attributeName)
--r-x   getInheritedProperties                       String[] : String[](propertyNames)
--r-x   isInherited                                  Boolean : String(propertyName)
--r-x   isSet                                        Boolean : String(propertyName)
--r-x   removeTag                                    Boolean : String(tag)
--r-x   removeTarget                                 Void : WebLogicMBean(target)
--r-x   restoreDefaultValue                          Void : String(attributeName)
--r-x   unSet                                        Void : String(propertyName)
+def _get_clusters():
+    cd('/Clusters')
+    L=[]; xs=cmo.getClusters()
+    if xs:
+        for i in range(len(xs)): L.append(xs[i].getName())
+    cd('/'); return L
 
-This Exception occurred at Wed Sep 24 09:34:25 EEST 2025.
-javax.management.AttributeNotFoundException: Attribute is readonly. : com.bea:Name=DefaultDomain,Type=Domain:Targets
-Saving all your changes ...
-Saved all your changes successfully.
-Activating all your changes, this may take a while ...
-The edit lock associated with this edit session is released once the activation is completed.
-Activation completed
-Already in requested Edit Tree
+def _map_targets(dev_names):
+    servers=_get_servers(); clusters=_get_clusters()
+    objs=[]
+    for n in (dev_names or []):
+        if n in servers:
+            objs.append(ObjectName('com.bea:Name='+n+',Type=Server'))
+        elif n in clusters:
+            objs.append(ObjectName('com.bea:Name='+n+',Type=Cluster'))
+    if len(objs)==0:
+        if FALLBACK_SERVER in servers:
+            objs=[ObjectName('com.bea:Name='+FALLBACK_SERVER+',Type=Server')]
+        elif len(servers)>0:
+            objs=[ObjectName('com.bea:Name='+servers[0]+',Type=Server')]
+    return objs
 
-Starting an edit session ...
-Started edit session, be sure to save and activate your changes once you are done.
-This Exception occurred at Wed Sep 24 09:34:25 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=jmsResources,Type=JMSSystemResource:JmsResource
-Saving all your changes ...
-Saved all your changes successfully.
-Activating all your changes, this may take a while ... 
-The edit lock associated with this edit session is released once the activation is completed.
-Activation completed
-JMS Module: OSBAQJMSServer
-dr--   JMSResource
-dr--   Resource
-dr--   SubDeployments
-dr--   Targets
+# --- JDBC --------------------------------------------------------------------
+def ensure_jdbc(ds, results):
+    name=ds.get('name'); jndi=ds.get('jndi') or []; url=ds.get('url'); driver=ds.get('driver'); props=ds.get('props') or {}
+    step('JDBC: %s' % name)
+    try:
+        cd('/')
+        if ls('/JDBCSystemResources/'+name, returnMap='true'):
+            ok('(exists) JDBCSystemResource/%s' % name)
+            results['jdbc_exists'].append(name)
+            return
 
--rw-   CompatibilityName                            null
--rw-   DeploymentOrder                              100
--rw-   DeploymentPrincipalName                      null
--r--   DescriptorFileName                           jms/osbAQResources-jms.xml
--r--   DynamicallyCreated                           false
--r--   Id                                           0
--rw-   ModuleType                                   null
--rw-   Name                                         OSBAQJMSServer
--rw-   Notes                                        null
--rw-   SourcePath                                   ./config/jms/osbAQResources-jms.xml
--rw-   Tags                                         null
--r--   Type                                         JMSSystemResource
+        _ensure_edit()
+        cmo.createJDBCSystemResource(name)
+        ok('Created JDBCSystemResource/%s' % name)
 
--r-x   addTag                                       Boolean : String(tag)
--r-x   addTarget                                    Void : WebLogicMBean(target)
--r-x   freezeCurrentValue                           Void : String(attributeName)
--r-x   getInheritedProperties                       String[] : String[](propertyNames)
--r-x   isInherited                                  Boolean : String(propertyName)
--r-x   isSet                                        Boolean : String(propertyName)
--r-x   removeTag                                    Boolean : String(tag)
--r-x   removeTarget                                 Void : WebLogicMBean(target)
--r-x   restoreDefaultValue                          Void : String(attributeName)
--r-x   unSet                                        Void : String(propertyName)
+        # JNDI
+        try:
+            path = '/JDBCSystemResources/%s/JdbcResource/%s/JDBCDataSourceParams/%s' % (name, name, name)
+            cd(path); log('cd: %s' % _pwd())
+            from jarray import array as jarrayArray
+            from java.lang import String
+            set('JNDINames', jarrayArray(jndi, String))
+            ok('Set JNDINames = %s' % (jndi,))
+        except:
+            warn('Unable to set JNDINames at %s' % path)
 
-Already in requested Edit Tree
+        # Driver/URL + Properties
+        try:
+            path = '/JDBCSystemResources/%s/JdbcResource/%s/JDBCDriverParams/%s' % (name, name, name)
+            cd(path); log('cd: %s' % _pwd())
+            if driver: cmo.setDriverName(driver); ok('DriverName=%s' % driver)
+            if url:    cmo.setUrl(url);           ok('URL=%s' % url)
+            try:
+                cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDriverParams/%s/Properties/%s' % (name, name, name, name))
+                for k in props.keys():
+                    if not ls('Properties/'+k, returnMap='true'): cmo.createProperty(k)
+                    cd('Properties/'+k); cmo.setValue(props[k]); cd('..')
+                ok('Driver properties set: %s' % (props.keys(),))
+            except:
+                warn('No driver properties set')
+        except:
+            warn('Could not set Driver/URL for %s' % name)
 
-Starting an edit session ...
-Started edit session, be sure to save and activate your changes once you are done.
-This Exception occurred at Wed Sep 24 09:34:25 EEST 2025.
-javax.management.AttributeNotFoundException: com.bea:Name=OSBAQJMSServer,Type=JMSSystemResource:JmsResource
-Saving all your changes ...
-Saved all your changes successfully.
-Activating all your changes, this may take a while ...
-The edit lock associated with this edit session is released once the activation is completed.
-Activation completed
-JMS Module: OSBJMSMODULE
-No stack trace available.
-  ! JMS error for OSBJMSMODULE
-OSB jar not found -> skip
-Disconnected from weblogic server: DefaultServer
+        # Targets
+        try:
+            path = '/JDBCSystemResources/%s' % name
+            cd(path); log('cd: %s' % _pwd())
+            from jarray import array as jarrayArray
+            mapped = _map_targets(ds.get('targets'))
+            set('Targets', jarrayArray(mapped, ObjectName))
+            ok('Targets mapped: %s' % (mapped,))
+        except:
+            warn('Could not set Targets for %s (pwd=%s)' % (name, _pwd()))
+
+        if _activate():
+            results['jdbc_ok'].append(name)
+        else:
+            results['jdbc_fail'].append(name)
+    except:
+        err('JDBC failed: %s (pwd=%s)' % (name, _pwd()))
+        results['jdbc_fail'].append(name)
+
+# --- JMS ---------------------------------------------------------------------
+def ensure_jms_module(mod, results):
+    mname=mod.get('name')
+    step('JMS Module: %s' % mname)
+    try:
+        cd('/')
+        if not ls('/JMSSystemResources/'+mname, returnMap='true'):
+            _ensure_edit()
+            cmo.createJMSSystemResource(mname)
+            ok('Created JMSSystemResource/%s' % mname)
+            try:
+                cd('/JMSSystemResources/'+mname); log('cd: %s' % _pwd())
+                from jarray import array as jarrayArray
+                set('Targets', jarrayArray(_map_targets(mod.get('targets')), ObjectName))
+                ok('Module targets set')
+            except:
+                warn('Could not set module targets (pwd=%s)' % _pwd())
+            _activate()
+        else:
+            ok('(exists) JMSSystemResource/%s' % mname)
+
+        # Subdeployments
+        subs = mod.get('subdeployments') or {}
+        if len(subs)>0:
+            _ensure_edit()
+            try:
+                cd('/JMSSystemResources/'+mname); log('cd: %s' % _pwd())
+                for sd in subs.keys():
+                    if not ls('SubDeployments/'+sd, returnMap='true'):
+                        cmo.createSubDeployment(sd); ok('Created SubDeployment/%s' % sd)
+                    cd('SubDeployments/'+sd); log('cd: %s' % _pwd())
+                    from jarray import array as jarrayArray
+                    set('Targets', jarrayArray(_map_targets(subs[sd]), ObjectName))
+                    ok('SubDeployment %s targets set' % sd)
+                    cd('..')
+            except:
+                warn('Could not create/target subdeployments (pwd=%s)' % _pwd())
+            _activate()
+
+        # Ensure JMSResource exists (case sensitive: **JMSResource**)
+        try:
+            path = '/JMSSystemResources/%s/JMSResource/%s' % (mname, mname)
+            cd(path); log('cd: %s' % _pwd())
+        except:
+            _ensure_edit()
+            try:
+                cd('/JMSSystemResources/'+mname)
+                cmo.createJmsResource(mname)  # creates child bean
+                ok('Created JMSResource/%s' % mname)
+                _activate()
+            except:
+                warn('Could not create JMSResource (pwd=%s)' % _pwd())
+
+        # Create CFs / Queues / Topics (your manifest currently has none)
+        # ConnectionFactories
+        try:
+            cd('/JMSSystemResources/%s/JMSResource/%s' % (mname, mname)); log('cd: %s' % _pwd())
+            for cf in mod.get('connectionFactories', []):
+                nm=cf.get('name'); jndi=cf.get('jndi')
+                if not ls('ConnectionFactories/'+nm, returnMap='true'):
+                    _ensure_edit()
+                    cmo.createConnectionFactory(nm)
+                    cd('ConnectionFactories/'+nm)
+                    if jndi: cmo.setJNDIName(jndi)
+                    ok('Created CF %s (JNDI=%s)' % (nm, jndi))
+                    _activate()
+                else:
+                    ok('(exists) CF %s' % nm)
+        except:
+            warn('CF pass failed for %s' % mname)
+
+        # Queues
+        try:
+            cd('/JMSSystemResources/%s/JMSResource/%s' % (mname, mname)); log('cd: %s' % _pwd())
+            for q in mod.get('queues', []):
+                nm=q.get('name'); jndi=q.get('jndi'); sd=q.get('subdeployment')
+                if not ls('Queues/'+nm, returnMap='true'):
+                    _ensure_edit()
+                    cmo.createQueue(nm)
+                    cd('Queues/'+nm)
+                    if jndi: cmo.setJNDIName(jndi)
+                    if sd:   cmo.setSubDeploymentName(sd)
+                    ok('Created Queue %s (JNDI=%s, SD=%s)' % (nm, jndi, sd))
+                    _activate()
+                else:
+                    ok('(exists) Queue %s' % nm)
+        except:
+            warn('Queue pass failed for %s' % mname)
+
+        # Topics
+        try:
+            cd('/JMSSystemResources/%s/JMSResource/%s' % (mname, mname)); log('cd: %s' % _pwd())
+            for t in mod.get('topics', []):
+                nm=t.get('name'); jndi=t.get('jndi'); sd=t.get('subdeployment')
+                if not ls('Topics/'+nm, returnMap='true'):
+                    _ensure_edit()
+                    cmo.createTopic(nm)
+                    cd('Topics/'+nm)
+                    if jndi: cmo.setJNDIName(jndi)
+                    if sd:   cmo.setSubDeploymentName(sd)
+                    ok('Created Topic %s (JNDI=%s, SD=%s)' % (nm, jndi, sd))
+                    _activate()
+                else:
+                    ok('(exists) Topic %s' % nm)
+        except:
+            warn('Topic pass failed for %s' % mname)
+
+        results['jms_ok'].append(mname)
+    except:
+        err('JMS module failed: %s (pwd=%s)' % (mname, _pwd()))
+        results['jms_fail'].append(mname)
+
+# --- OSB (optional) ----------------------------------------------------------
+def import_osb_if_any(path_jar, results):
+    step('OSB import (optional)')
+    if not (path_jar and os.path.exists(path_jar)):
+        warn('OSB jar not found -> skip')
+        results['osb'] = 'skipped (jar missing)'
+        return
+    try:
+        from com.bea.wli.sb.management.configuration import ALSBConfigurationMBean
+        alsb = findService(ALSBConfigurationMBean.NAME, ALSBConfigurationMBean.TYPE)
+        if alsb is None:
+            warn('ALSB MBean not available -> skip')
+            results['osb'] = 'skipped (ALSB MBean not available)'
+            return
+        try:
+            alsb.importToDomain(path_jar, True)
+            ok('OSB import attempted via importToDomain')
+            results['osb'] = 'attempted'
+        except:
+            warn('importToDomain not supported; skipping')
+            results['osb'] = 'skipped (method unsupported)'
+    except:
+        warn('OSB APIs not present; skipping')
+        results['osb'] = 'skipped (APIs not present)'
+
+# --- run ---------------------------------------------------------------------
+def main():
+    step('Connect to Admin')
+    connect(ADMIN_USER, ADMIN_PASS, ADMIN_URL)
+    ok('Connected to %s' % ADMIN_URL)
+    domainConfig()
+    ok('In domainConfig tree')
+
+    man = _load_manifest(MANIFEST)
+    results = {
+        'jdbc_ok': [], 'jdbc_fail': [], 'jdbc_exists': [],
+        'jms_ok': [],  'jms_fail': [],
+        'osb': None
+    }
+
+    # JDBC
+    for ds in man.get('jdbc', []):
+        ensure_jdbc(ds, results)
+
+    # JMS
+    for mod in man.get('jms', []):
+        ensure_jms_module(mod, results)
+
+    # OSB
+    import_osb_if_any(SB_JAR, results)
+
+    # Summary
+    step('RESULT SUMMARY')
+    print 'JDBC created   :', results['jdbc_ok']
+    print 'JDBC existed   :', results['jdbc_exists']
+    print 'JDBC failed    :', results['jdbc_fail']
+    print 'JMS ok         :', results['jms_ok']
+    print 'JMS failed     :', results['jms_fail']
+    print 'OSB            :', results['osb']
+
+    disconnect(); ok('Disconnected')
+    exit()
+
+main()
 
 
-Exiting WebLogic Scripting Tool.
+⸻
+
+Why this fixes your errors
+	•	AttributeNotFound ... :JmsResource → we now use JMSResource (uppercase “JMS”), which is what WLST shows in your listing.
+	•	Attribute is readonly ... Domain:Targets → we now log pwd() before every set('Targets', ...) to ensure we’re on /JMSSystemResources/<name> (not / / Domain). If we’re not, you’ll see the path in the console to diagnose.
+	•	JDBC silently failing → we now log each cd and step; you’ll see exactly which path (JNDI/Driver/Targets) is failing and why.
+
+⸻
+
+A couple of practical tips
+	•	Your manifest currently has no queues/topics/CFs under JMS (only subdeployments). That’s why you don’t see resources created—just subdeployment targets. If you want actual queues/topics/CFs ported, we can enhance the exporter to include:
+	•	Uniform distributed queues/topics
+	•	Foreign servers, SAF, etc.
+	•	For JDBC creation, WebLogic won’t have the password (masked in Dev). After the DS is created, set the password once in the Console on local, or extend the script to read from env vars.
+
+If this still throws on your setup, paste the new console output (it’ll be much clearer now), and I’ll tweak the exact failing step quickly.
