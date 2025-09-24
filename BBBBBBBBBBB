@@ -1,98 +1,60 @@
-Perfect — here’s Option 3 fully implemented: an upgraded exporter that explicitly captures JCA (adapter) connection instances (JNDIs) per adapter, and a matching importer that creates any missing JCA connection instances in your local adapter deployment plans (and redeploys the adapters so the JNDIs show up under Outbound Connection Pools).
+Got it. Here’s a single WLST/Jython script that:
+	•	Connects to DEV, reads all JDBC datasources and the DbAdapter plan (so it knows which connection-instances point to which datasource JNDIs).
+	•	Connects to your LOCAL Admin, creates the same JDBC datasources (same names/JNDI/driver/url/properties) and targets them to DefaultServer (or first server if DefaultServer is missing).
+	•	Ensures the DbAdapter on LOCAL has matching connection-instances and points each one to the same datasource JNDI as on DEV (via DataSourceName / xADataSourceName property overrides in the plan), then redeploys DbAdapter so changes take effect.
 
-Both are WLST/Jython-safe (no ternaries, no with open, no time), with clear logs and a final summary.
+ASCII-only, WLST-safe (no with open, no ternaries, no emojis).
 
 ⸻
 
-1) Enhanced Exporter — export_dev_jca.py
+clone_jdbc_and_hook_dbadapter.py
 
+# -*- coding: ascii -*-
 # =============================================================================
-# export_dev_jca.py — Export DEV config to JSON (incl. JCA Adapter JNDIs)
-# Usage: $WL_HOME/common/bin/wlst.sh export_dev_jca.py
+# clone_jdbc_and_hook_dbadapter.py
+#
+# One-shot cloner:
+#   1) Connect to DEV -> read all JDBC datasources and DbAdapter plan links
+#   2) Connect to LOCAL -> create same JDBC on DefaultServer and hook DbAdapter
+#
+# Usage:
+#   $WL_HOME/common/bin/wlst.sh clone_jdbc_and_hook_dbadapter.py
+#
 # Notes:
-#  - WLST/Jython safe: no ternaries, no "with open", no time module.
-#  - Writes valid JSON with built-in writer (no json/simplejson dependency).
-#  - Captures: targets, applications (filtered), JDBC, JMS, and JCA (adapter JNDIs).
+#   - Passwords in DEV JDBC are not readable; this script creates datasources
+#     with URL/driver/JNDI/properties except password. Set passwords locally once
+#     in the Console or extend this script to inject from environment.
+#   - Targets: always mapped to DefaultServer if it exists; otherwise to the
+#     first available server in the local domain.
+#   - DbAdapter: creates connection-instances (by JNDI) if missing and sets
+#     DataSourceName/xADataSourceName from DEV values. Redeploys DbAdapter.
 # =============================================================================
 
 # ----------------------- USER SETTINGS ---------------------------------------
-ADMIN_URL  = 't3s://dev-admin-host:7002'   # <-- change
-ADMIN_USER = 'weblogic'                    # <-- change
-ADMIN_PASS = '***'                         # <-- change
+DEV_ADMIN_URL   = 't3s://dev-admin-host:7002'    # change
+DEV_ADMIN_USER  = 'weblogic'                     # change
+DEV_ADMIN_PASS  = '***'                          # change
 
-OUT_DIR    = './export'
+LOCAL_ADMIN_URL  = 't3://localhost:7101'         # JDev Integrated default
+LOCAL_ADMIN_USER = 'weblogic'                    # change if needed
+LOCAL_ADMIN_PASS = '***'                         # change if needed
 
-# JCA adapters to include (add/remove as needed)
-JCA_ADAPTERS = [
-  'JmsAdapter', 'DbAdapter', 'FtpAdapter', 'AqAdapter',
-  'FileAdapter', 'SocketAdapter', 'SAPAdapter',
-  'MQSeriesAdapter', 'LdapAdapter', 'MSMQAdapter',
-  'OracleAppsAdapter', 'JDEWorldAdapter', 'Cloudsdk'
-]
+LOCAL_FALLBACK_SERVER = 'DefaultServer'          # target here on local
 
-# ----------------------- IMPORTS / RUNTIME -----------------------------------
-import os
+# If you need to exclude obvious system datasources, set to True
+EXCLUDE_SYSTEM_JDBC = False
+
+# ----------------------- IMPORTS ---------------------------------------------
 from datetime import datetime
+import os
 from javax.management import ObjectName
 
-# ----------------------- MINIMAL JSON WRITER ---------------------------------
-def _json_escape(s):
-    if s is None: return 'null'
-    s = str(s)
-    out = []
-    i = 0
-    while i < len(s):
-        ch = s[i]; code = ord(ch)
-        if ch == '"': out.append('\\"')
-        elif ch == '\\': out.append('\\\\')
-        elif ch == '\b': out.append('\\b')
-        elif ch == '\f': out.append('\\f')
-        elif ch == '\n': out.append('\\n')
-        elif ch == '\r': out.append('\\r')
-        elif ch == '\t': out.append('\\t')
-        elif code < 0x20 or code == 0x2028 or code == 0x2029:
-            out.append('\\u%04x' % code)
-        else:
-            out.append(ch)
-        i += 1
-    return '"' + ''.join(out) + '"'
+# ----------------------- LOGGING ---------------------------------------------
+def ts(): return datetime.now().strftime('%H:%M:%S')
+def info(msg): print '[%s] %s' % (ts(), msg)
+def step(msg): print '\n[%s] >>> %s' % (ts(), msg)
 
-def _to_json(o):
-    if o is None: return 'null'
-    t = str(type(o))
-    try:
-        if o is True:  return 'true'
-        if o is False: return 'false'
-    except: pass
-    if t.find('int')!=-1 or t.find('long')!=-1 or t.find('float')!=-1 or t.find('double')!=-1:
-        return str(o)
-    if t.find('str')!=-1 or t.find('unicode')!=-1 or t.find('java.lang.String')!=-1:
-        return _json_escape(o)
-    if isinstance(o, list) or isinstance(o, tuple):
-        parts=[]; i=0
-        while i<len(o): parts.append(_to_json(o[i])); i+=1
-        return '['+','.join(parts)+']'
-    if isinstance(o, dict):
-        parts=[]; ks=o.keys()
-        i=0
-        while i<len(ks):
-            k=ks[i]; parts.append(_json_escape(k)+':'+_to_json(o[k])); i+=1
-        return '{'+','.join(parts)+'}'
-    return _json_escape(str(o))
-
-def write_json(path, obj):
-    d = os.path.dirname(os.path.abspath(path))
-    if not os.path.isdir(d): os.makedirs(d)
-    fw = open(path, 'w'); fw.write(_to_json(obj)); fw.close()
-
-# ----------------------- FILTERS (tune as needed) ----------------------------
-_EXCLUDE_APP_PREFIX = (
-  'em','wsm-pm','wsm-cache','dms','coherence','weblogic',
-  'opss','oracle.bi','oracle.dms','oracledi','soa-infra','mft',
-  'bpm','adminconsole','bea_wls9_async_response','ums','wls-wsat'
-)
-_EXCLUDE_APP_CONTAINS = ('#','coherence-transaction','-rar','management','wlfullclient')
-
+# ----------------------- FILTERS (optional) ----------------------------------
 _EXCLUDE_JDBC_PREFIX = (
   'SOADataSource','EDNDataSource','EDNLocalTxDataSource','OraSDPMDataSource',
   'mds-','opss-','wlsbjmsrp','WLSSchemaDataSource','LocalSvcTblDataSource',
@@ -100,635 +62,430 @@ _EXCLUDE_JDBC_PREFIX = (
   'SOAINFRA','ESSDS','UmsDataSource','RSMANAGEDDS','STBDataSource'
 )
 
-_EXCLUDE_JMS_PREFIX = (
-  'UMSJMSServer','UMSJMSSystemResource','SOAJMSModule','EDN',
-  'BPM','wlsbJMSServer','WseeJmsModule','WLSJMSModule'
-)
-
-def _skip_app(name):
-    if name is None: return True
-    low=name.lower(); i=0
-    while i<len(_EXCLUDE_APP_PREFIX):
-        if low.startswith(_EXCLUDE_APP_PREFIX[i]): return True
-        i+=1
-    j=0
-    while j<len(_EXCLUDE_APP_CONTAINS):
-        if low.find(_EXCLUDE_APP_CONTAINS[j])!=-1: return True
-        j+=1
-    return False
-
 def _skip_jdbc(name):
+    if not EXCLUDE_SYSTEM_JDBC:
+        return False
     if name is None: return True
-    low=name.lower(); i=0
-    while i<len(_EXCLUDE_JDBC_PREFIX):
-        if low.startswith(_EXCLUDE_JDBC_PREFIX[i].lower()): return True
-        i+=1
+    low = name.lower()
+    i = 0
+    while i < len(_EXCLUDE_JDBC_PREFIX):
+        if low.startswith(_EXCLUDE_JDBC_PREFIX[i].lower()):
+            return True
+        i += 1
     return False
 
-def _skip_jms(name):
-    if name is None: return True
-    low=name.lower(); i=0
-    while i<len(_EXCLUDE_JMS_PREFIX):
-        if low.startswith(_EXCLUDE_JMS_PREFIX[i].lower()): return True
-        i+=1
-    return False
+# ----------------------- DEV EXPORT ------------------------------------------
+def dev_export_jdbc_and_dbadapter():
+    """
+    Returns:
+      jdbc_list: [ {name, jndi[], driver, url, props{}} ... ]
+      db_ci_map: { jndi_string : { 'DataSourceName': 'jdbc/Name', 'xADataSourceName': 'jdbc/Name' } }
+    """
+    jdbc_list = []
+    db_ci_map = {}
 
-def _safe_str(v): return None if v is None else str(v)
-
-# ----------------------- EXPORT ----------------------------------------------
-def main():
-    connect(ADMIN_USER, ADMIN_PASS, ADMIN_URL)
+    info('Connecting to DEV: %s' % DEV_ADMIN_URL)
+    connect(DEV_ADMIN_USER, DEV_ADMIN_PASS, DEV_ADMIN_URL)
     domainConfig()
+    info('Connected to DEV and in domainConfig')
 
-    ts_file = datetime.now().strftime('%Y%m%d-%H%M%S')
-    ts_hum  = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    out_dir_abs = os.path.abspath(OUT_DIR)
-    if not os.path.isdir(out_dir_abs): os.makedirs(out_dir_abs)
-
-    manifest = {
-        'domainVersion': None,
-        'exportedAt': ts_hum,
-        'adminUrl': ADMIN_URL,
-        'targets': {},
-        'applications': [],
-        'libraries': [],
-        'jdbc': [],
-        'jms': [],
-        'jca': []   # << NEW: per-adapter connection-instances (JNDIs)
-    }
-
-    # Domain version
-    try:
-        cd('/'); manifest['domainVersion'] = _safe_str(cmo.getDomainVersion())
-    except: pass
-
-    # Targets (Servers/Clusters)
-    try:
-        cd('/')
-        srvs = cmo.getServers()
-        if srvs:
-            i=0
-            while i<len(srvs):
-                s=srvs[i]; manifest['targets'][s.getName()]={'type':'Server'}; i+=1
-        cls = cmo.getClusters()
-        if cls:
-            j=0
-            while j<len(cls):
-                c=cls[j]; manifest['targets'][c.getName()]={'type':'Cluster'}; j+=1
-    except: pass
-
-    # Applications
-    try:
-        cd('/AppDeployments')
-        apps = cmo.getAppDeployments()
-        if apps:
-            i=0
-            while i<len(apps):
-                app=apps[i]; i+=1
-                name=app.getName()
-                if _skip_app(name): continue
-                tgts=[]
-                try:
-                    cd('/AppDeployments/'+name+'/Targets')
-                    t=cmo.getTargets()
-                    if t:
-                        k=0
-                        while k<len(t):
-                            tgts.append(t[k].getName()); k+=1
-                except: pass
-                cd('/')
-                manifest['applications'].append({'name':name,'targets':tgts})
-    except: pass
-
-    # Libraries
-    try:
-        cd('/Libraries')
-        libs = cmo.getLibraries()
-        if libs:
-            i=0
-            while i<len(libs):
-                lib=libs[i]; i+=1
-                name=lib.getName()
-                if _skip_app(name): continue
-                tgts=[]
-                try:
-                    cd('/Libraries/'+name+'/Targets')
-                    t=cmo.getTargets()
-                    if t:
-                        k=0
-                        while k<len(t):
-                            tgts.append(t[k].getName()); k+=1
-                except: pass
-                cd('/')
-                manifest['libraries'].append({'name':name,'targets':tgts})
-    except: pass
-
-    # JDBC
+    # JDBC export
     try:
         cd('/JDBCSystemResources')
         jdbcs = cmo.getJDBCSystemResources()
         if jdbcs:
-            i=0
-            while i<len(jdbcs):
-                jdbc=jdbcs[i]; i+=1
-                jname=jdbc.getName()
-                if _skip_jdbc(jname): continue
-                jndi=[]; driver=None; url=None; props={}; tgts=[]
+            i = 0
+            while i < len(jdbcs):
+                jdbc = jdbcs[i]; i += 1
+                name = jdbc.getName()
+                if _skip_jdbc(name):
+                    continue
+
+                jndi = []
+                driver = None
+                url = None
+                props = {}
+
+                # JNDI names
                 try:
-                    cd('/JDBCSystemResources/'+jname+'/JdbcResource/'+jname+'/JDBCDataSourceParams/'+jname)
-                    jn=cmo.getJNDINames()
+                    cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDataSourceParams/%s' % (name, name, name))
+                    jn = cmo.getJNDINames()
                     if jn:
-                        k=0
-                        while k<len(jn): jndi.append(jn[k]); k+=1
-                except: pass
+                        k = 0
+                        while k < len(jn):
+                            jndi.append(jn[k]); k += 1
+                except:
+                    pass
+
+                # Driver/URL/Properties (password not readable)
                 try:
-                    cd('/JDBCSystemResources/'+jname+'/JdbcResource/'+jname+'/JDBCDriverParams/'+jname)
-                    try: driver=_safe_str(cmo.getDriverName())
-                    except: driver=None
-                    try: url=_safe_str(cmo.getUrl())
-                    except: url=None
+                    cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDriverParams/%s' % (name, name, name))
+                    try: driver = str(cmo.getDriverName())
+                    except: driver = None
+                    try: url = str(cmo.getUrl())
+                    except: url = None
                     try:
-                        pset=cmo.getProperties()
+                        pset = cmo.getProperties()
                         if pset:
-                            plist=pset.getProperties()
+                            plist = pset.getProperties()
                             if plist:
-                                p=0
-                                while p<len(plist):
-                                    pr=plist[p]; props[pr.getName()]=_safe_str(pr.getValue()); p+=1
-                    except: pass
-                except: pass
-                try:
-                    cd('/JDBCSystemResources/'+jname+'/Targets')
-                    t=cmo.getTargets()
-                    if t:
-                        k=0
-                        while k<len(t): tgts.append(t[k].getName()); k+=1
-                except: pass
+                                p = 0
+                                while p < len(plist):
+                                    pr = plist[p]
+                                    pname = pr.getName()
+                                    pval  = pr.getValue()
+                                    # do not attempt to read or set password here
+                                    props[pname] = None if pval is None else str(pval)
+                                    p += 1
+                    except:
+                        pass
+                except:
+                    pass
+
                 cd('/')
-                manifest['jdbc'].append({'name':jname,'jndi':jndi,'driver':driver,'url':url,'props':props,'targets':tgts})
-    except: pass
-
-    # JMS
-    try:
-        cd('/JMSSystemResources')
-        mods = cmo.getJMSSystemResources()
-        if mods:
-            i=0
-            while i<len(mods):
-                mod=mods[i]; i+=1
-                mname=mod.getName()
-                if _skip_jms(mname): continue
-                module={'name':mname,'targets':[],'connectionFactories':[],'queues':[],'topics':[],'subdeployments':{}}
-                try:
-                    cd('/JMSSystemResources/'+mname+'/Targets')
-                    t=cmo.getTargets()
-                    if t:
-                        k=0
-                        while k<len(t): module['targets'].append(t[k].getName()); k+=1
-                except: pass
-                try:
-                    cd('/JMSSystemResources/'+mname+'/JMSResource/'+mname)
-                    cfs=cmo.getConnectionFactories()
-                    if cfs:
-                        k=0
-                        while k<len(cfs):
-                            cf=cfs[k]; module['connectionFactories'].append({'name':cf.getName(),'jndi':_safe_str(cf.getJNDIName())}); k+=1
-                    qs=cmo.getQueues()
-                    if qs:
-                        k=0
-                        while k<len(qs):
-                            q=qs[k]; module['queues'].append({'name':q.getName(),'jndi':_safe_str(q.getJNDIName()),'subdeployment':_safe_str(q.getSubDeploymentName())}); k+=1
-                    ts=cmo.getTopics()
-                    if ts:
-                        k=0
-                        while k<len(ts):
-                            tpc=ts[k]; module['topics'].append({'name':tpc.getName(),'jndi':_safe_str(tpc.getJNDIName()),'subdeployment':_safe_str(tpc.getSubDeploymentName())}); k+=1
-                except: pass
-                try:
-                    cd('/JMSSystemResources/'+mname+'/SubDeployments')
-                    sds=cmo.getSubDeployments()
-                    if sds:
-                        k=0
-                        while k<len(sds):
-                            sd=sds[k]; sdname=sd.getName(); targets=[]
-                            try:
-                                cd('/JMSSystemResources/'+mname+'/SubDeployments/'+sdname+'/Targets')
-                                t=cmo.getTargets()
-                                if t:
-                                    x=0
-                                    while x<len(t):
-                                        targets.append(t[x].getName()); x+=1
-                            except: pass
-                            module['subdeployments'][sdname]=targets; k+=1
-                except: pass
-                cd('/')
-                manifest['jms'].append(module)
-    except: pass
-
-    # ----------------------- NEW: JCA (adapter connection-instances/JNDIs) ----
-    def export_adapter_instances(adapter):
-        out={'adapter':adapter,'instances':[]}
-        path='/AppDeployments/'+adapter
-        try:
-            if not ls(path, returnMap='true'):
-                return None
-            cd(path)
-            app=cmo; plan=app.getDeploymentPlan()
-            if plan is None:
-                cd('/'); return out  # adapter deployed but no plan; nothing to list
-            planBean = plan.getPlanBean()
-            mos = planBean.getModuleOverrides()
-            if mos:
-                i=0
-                while i<len(mos):
-                    mo=mos[i]
-                    # match module by name if present; otherwise accept single rar plan
-                    if mo.getModuleType()=='rar':
-                        if mo.getModuleName() and mo.getModuleName()!=adapter:
-                            i+=1; continue
-                        cos = mo.getConnectionInstanceOverrides()
-                        if cos:
-                            j=0
-                            while j<len(cos):
-                                co=cos[j]
-                                jndi=_safe_str(co.getJndiName())
-                                if jndi is not None:
-                                    out['instances'].append({'jndi':jndi})
-                                j+=1
-                        break
-                    i+=1
-            cd('/')
-            return out
-        except:
-            cd('/')
-            return out
-
-    a=0
-    while a<len(JCA_ADAPTERS):
-        ad=JCA_ADAPTERS[a]; a+=1
-        res = export_adapter_instances(ad)
-        if res and len(res['instances'])>0:
-            manifest['jca'].append(res)
-
-    # Save manifest
-    manifest_path = os.path.abspath(os.path.join(out_dir_abs, 'manifest-dev-'+ts_file+'.json'))
-    write_json(manifest_path, manifest)
-
-    print ''
-    print 'Export complete.'
-    print '  Manifest:', manifest_path
-
-    disconnect(); exit()
-
-main()
-
-
-⸻
-
-2) Enhanced Importer — import_local_jca.py
-
-This reads the new jca section and ensures every exported JNDI exists as a connection-instance in the adapter’s plan on your local domain. If the adapter has no plan attached, it creates/attaches a plan.xml (under the adapter’s deployment folder), then redeploys the adapter so WebLogic picks up the new plan.
-
-# =============================================================================
-# import_local_jca.py — Import JDBC/JMS and JCA adapter JNDIs into LOCAL WLS
-# Usage: $WL_HOME/common/bin/wlst.sh import_local_jca.py
-# =============================================================================
-
-# --- USER SETTINGS -----------------------------------------------------------
-ADMIN_URL   = 't3://localhost:7101'      # JDeveloper Integrated default
-ADMIN_USER  = 'weblogic'
-ADMIN_PASS  = '***'
-
-MANIFEST    = r'.\export\manifest-dev-YYYYMMDD-HHMMSS.json'   # <-- set exact file path
-
-FALLBACK_SERVER = 'DefaultServer'  # for JMS/JDBC mapping
-
-# --- IMPORTS / LOGGING -------------------------------------------------------
-import os
-from javax.management import ObjectName
-from datetime import datetime
-
-def stamp(): return datetime.now().strftime('%H:%M:%S')
-def log(msg):  print '[%s] %s' % (stamp(), msg)
-def ok(msg):   print '[%s]   ✅ %s' % (stamp(), msg)
-def warn(msg): print '[%s]   ⚠️  %s' % (stamp(), msg)
-def err(msg):  print '[%s]   ❌ %s' % (stamp(), msg)
-def step(msg): print '\n[%s] ▶ %s' % (stamp(), msg)
-
-# --- tiny JSON loader --------------------------------------------------------
-def _parse_json_text(txt):
-    try:
-        import json; return json.loads(txt)
+                jdbc_list.append({'name': name, 'jndi': jndi, 'driver': driver, 'url': url, 'props': props})
     except:
-        try:
-            import simplejson as json; return json.loads(txt)
-        except:
-            rep=txt.replace('true','True').replace('false','False').replace('null','None')
-            return eval(rep, {"__builtins__": {}})
+        info('Warning: could not enumerate DEV JDBCSystemResources')
 
-def _load_manifest(path):
-    fr=open(path,'r'); s=fr.read(); fr.close(); return _parse_json_text(s)
+    # DbAdapter plan: map each connection-instance JNDI to its datasource property
+    try:
+        adapter = 'DbAdapter'
+        path = '/AppDeployments/%s' % adapter
+        if ls(path, returnMap='true'):
+            cd(path)
+            app = cmo
+            plan = app.getDeploymentPlan()
+            if plan:
+                planBean = plan.getPlanBean()
+                mos = planBean.getModuleOverrides()
+                if mos:
+                    idx = 0
+                    while idx < len(mos):
+                        mo = mos[idx]; idx += 1
+                        if mo.getModuleType() == 'rar':
+                            if mo.getModuleName() and mo.getModuleName() != adapter:
+                                continue
+                            cos = mo.getConnectionInstanceOverrides()
+                            if cos:
+                                j = 0
+                                while j < len(cos):
+                                    co = cos[j]; j += 1
+                                    jndi = co.getJndiName()
+                                    if jndi:
+                                        jndi_s = str(jndi)
+                                        # collect datasource property overrides
+                                        entry = {}
+                                        try:
+                                            cprops = co.getConnectionPropertyOverrides()
+                                            if cprops:
+                                                k = 0
+                                                while k < len(cprops):
+                                                    cpo = cprops[k]; k += 1
+                                                    pname = cpo.getName()
+                                                    pval  = cpo.getValue()
+                                                    if pname in ('DataSourceName', 'xADataSourceName'):
+                                                        entry[pname] = None if pval is None else str(pval)
+                                        except:
+                                            pass
+                                        if len(entry) > 0:
+                                            db_ci_map[jndi_s] = entry
+            cd('/')
+    except:
+        info('Warning: could not read DbAdapter plan on DEV')
 
-# --- helpers ----------------------------------------------------------------
-def _pwd():
-    try: return pwd()
-    except: return '(unknown)'
+    disconnect()
+    info('Disconnected from DEV')
 
-def _ensure_edit():
+    return jdbc_list, db_ci_map
+
+# ----------------------- LOCAL HELPERS ---------------------------------------
+def local_servers():
+    cd('/Servers'); L = []; xs = cmo.getServers()
+    if xs:
+        i = 0
+        while i < len(xs):
+            L.append(xs[i].getName()); i += 1
+    cd('/'); return L
+
+def local_default_target():
+    servers = local_servers()
+    if LOCAL_FALLBACK_SERVER in servers:
+        return [ObjectName('com.bea:Name=' + LOCAL_FALLBACK_SERVER + ',Type=Server')]
+    if len(servers) > 0:
+        return [ObjectName('com.bea:Name=' + servers[0] + ',Type=Server')]
+    return []
+
+def ensure_edit():
     try:
         edit(); startEdit(waitTimeInMillis=600000)
         return True
     except:
         return True
 
-def _activate():
+def activate_changes():
     try:
-        save(); activate(block='true'); ok('Changes activated'); return True
+        save(); activate(block='true')
+        return True
     except:
-        err('Activation failed'); return False
+        return False
 
-def _get_servers():
-    cd('/Servers'); L=[]; xs=cmo.getServers()
-    if xs:
-        for i in range(len(xs)): L.append(xs[i].getName())
-    cd('/'); return L
+# ----------------------- LOCAL CREATE JDBC -----------------------------------
+def local_create_jdbc(ds):
+    name   = ds.get('name')
+    jndi   = ds.get('jndi') or []
+    url    = ds.get('url')
+    driver = ds.get('driver')
+    props  = ds.get('props') or {}
 
-def _get_clusters():
-    cd('/Clusters'); L=[]; xs=cmo.getClusters()
-    if xs:
-        for i in range(len(xs)): L.append(xs[i].getName())
-    cd('/'); return L
+    info('JDBC: %s' % name)
 
-def _map_targets(dev_names):
-    servers=_get_servers(); clusters=_get_clusters()
-    objs=[]
-    for n in (dev_names or []):
-        if n in servers:  objs.append(ObjectName('com.bea:Name='+n+',Type=Server'))
-        elif n in clusters: objs.append(ObjectName('com.bea:Name='+n+',Type=Cluster'))
-    if len(objs)==0:
-        if FALLBACK_SERVER in servers:
-            objs=[ObjectName('com.bea:Name='+FALLBACK_SERVER+',Type=Server')]
-        elif len(servers)>0:
-            objs=[ObjectName('com.bea:Name='+servers[0]+',Type=Server')]
-    return objs
+    cd('/')
+    if ls('/JDBCSystemResources/' + name, returnMap='true'):
+        info('  Exists, skipping create: %s' % name)
+        return True
 
-# --- JDBC (same as before, condensed) ---------------------------------------
-def ensure_jdbc(ds, results):
-    name=ds.get('name'); jndi=ds.get('jndi') or []; url=ds.get('url'); driver=ds.get('driver'); props=ds.get('props') or {}
-    step('JDBC: %s' % name)
+    ensure_edit()
     try:
-        cd('/')
-        if ls('/JDBCSystemResources/'+name, returnMap='true'):
-            ok('(exists) JDBCSystemResource/%s' % name); results['jdbc_exists'].append(name); return
-        _ensure_edit()
-        cmo.createJDBCSystemResource(name); ok('Created JDBCSystemResource/%s' % name)
+        cmo.createJDBCSystemResource(name)
+        info('  Created JDBCSystemResource/%s' % name)
 
+        # JNDI
         try:
-            cd('/JDBCSystemResources/'+name+'/JdbcResource/'+name+'/JDBCDataSourceParams/'+name)
-            from jarray import array as jarrayArray; from java.lang import String
-            set('JNDINames', jarrayArray(jndi, String)); ok('JNDI=%s' % (jndi,))
-        except: warn('Set JNDI failed (pwd=%s)' % _pwd())
-
-        try:
-            cd('/JDBCSystemResources/'+name+'/JdbcResource/'+name+'/JDBCDriverParams/'+name)
-            if driver: cmo.setDriverName(driver)
-            if url:    cmo.setUrl(url)
-            try:
-                cd('/JDBCSystemResources/'+name+'/JdbcResource/'+name+'/JDBCDriverParams/'+name+'/Properties/'+name)
-                for k in props.keys():
-                    if not ls('Properties/'+k, returnMap='true'): cmo.createProperty(k)
-                    cd('Properties/'+k); cmo.setValue(props[k]); cd('..')
-                ok('Driver properties set: %s' % (props.keys(),))
-            except: pass
-        except: warn('Set Driver/URL failed (pwd=%s)' % _pwd())
-
-        try:
-            cd('/JDBCSystemResources/'+name)
+            cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDataSourceParams/%s' % (name, name, name))
             from jarray import array as jarrayArray
-            set('Targets', jarrayArray(_map_targets(ds.get('targets')), ObjectName)); ok('Targets set')
-        except: warn('Set Targets failed (pwd=%s)' % _pwd())
-
-        if _activate(): results['jdbc_ok'].append(name)
-        else: results['jdbc_fail'].append(name)
-    except:
-        err('JDBC failed: %s' % name); results['jdbc_fail'].append(name)
-
-# --- JMS (same as before, condensed & corrected) ----------------------------
-def ensure_jms_module(mod, results):
-    mname=mod.get('name'); step('JMS Module: %s' % mname)
-    try:
-        cd('/')
-        if not ls('/JMSSystemResources/'+mname, returnMap='true'):
-            _ensure_edit(); cmo.createJMSSystemResource(mname); ok('Created JMSSystemResource/%s' % mname)
-            try:
-                cd('/JMSSystemResources/'+mname)
-                from jarray import array as jarrayArray
-                set('Targets', jarrayArray(_map_targets(mod.get('targets')), ObjectName)); ok('Module targets set')
-            except: warn('Set module targets failed (pwd=%s)' % _pwd())
-            _activate()
-        else:
-            ok('(exists) JMSSystemResource/%s' % mname)
-
-        subs=mod.get('subdeployments') or {}
-        if len(subs)>0:
-            _ensure_edit()
-            cd('/JMSSystemResources/'+mname)
-            for sd in subs.keys():
-                if not ls('SubDeployments/'+sd, returnMap='true'): cmo.createSubDeployment(sd); ok('Created SubDeployment/%s' % sd)
-                cd('SubDeployments/'+sd)
-                from jarray import array as jarrayArray
-                set('Targets', jarrayArray(_map_targets(subs[sd]), ObjectName)); ok('SubDeployment %s targets set' % sd)
-                cd('..')
-            _activate()
-
-        # Ensure JMSResource (case!)
-        try:
-            cd('/JMSSystemResources/%s/JMSResource/%s' % (mname, mname))
+            from java.lang import String
+            set('JNDINames', jarrayArray(jndi, String))
+            info('  JNDI names set: %s' % (jndi,))
         except:
-            _ensure_edit()
-            cd('/JMSSystemResources/'+mname); cmo.createJmsResource(mname); ok('Created JMSResource/%s' % mname); _activate()
+            info('  Warning: could not set JNDI names for %s' % name)
 
-        # CFs / Queues / Topics (create if present in manifest)
+        # Driver and URL
         try:
-            cd('/JMSSystemResources/%s/JMSResource/%s' % (mname, mname))
-            for cf in mod.get('connectionFactories', []):
-                nm=cf.get('name'); jndi=cf.get('jndi')
-                if not ls('ConnectionFactories/'+nm, returnMap='true'):
-                    _ensure_edit(); cmo.createConnectionFactory(nm); cd('ConnectionFactories/'+nm)
-                    if jndi: cmo.setJNDIName(jndi); ok('CF %s (JNDI=%s)' % (nm,jndi)); _activate()
-            for q in mod.get('queues', []):
-                nm=q.get('name'); jndi=q.get('jndi'); sd=q.get('subdeployment')
-                if not ls('Queues/'+nm, returnMap='true'):
-                    _ensure_edit(); cmo.createQueue(nm); cd('Queues/'+nm)
-                    if jndi: cmo.setJNDIName(jndi)
-                    if sd:   cmo.setSubDeploymentName(sd)
-                    ok('Queue %s (JNDI=%s, SD=%s)' % (nm,jndi,sd)); _activate()
-            for t in mod.get('topics', []):
-                nm=t.get('name'); jndi=t.get('jndi'); sd=t.get('subdeployment')
-                if not ls('Topics/'+nm, returnMap='true'):
-                    _ensure_edit(); cmo.createTopic(nm); cd('Topics/'+nm)
-                    if jndi: cmo.setJNDIName(jndi)
-                    if sd:   cmo.setSubDeploymentName(sd)
-                    ok('Topic %s (JNDI=%s, SD=%s)' % (nm,jndi,sd)); _activate()
-        except: pass
-
-        results['jms_ok'].append(mname)
-    except:
-        err('JMS module failed: %s' % mname); results['jms_fail'].append(mname)
-
-# --- JCA (NEW): ensure adapter plan has all connection-instances -------------
-def _default_adapter_plan_path(adapter):
-    # Try to place a plan under the deployment if possible; Integrated domains vary.
-    domain_home = cmo.getRootDirectory()  # DomainMBean
-    if domain_home is None: domain_home = os.getcwd()
-    # typical: <DOMAIN>/config/deployments/<Adapter>/plan/plan.xml
-    return os.path.join(domain_home, 'config', 'deployments', adapter, 'plan', 'plan.xml')
-
-def ensure_adapter_instances(adapter, instances, results):
-    step('JCA Adapter: %s' % adapter)
-    try:
-        path='/AppDeployments/'+adapter
-        if not ls(path, returnMap='true'):
-            warn('Adapter not deployed locally: %s' % adapter); results['jca_miss'].append(adapter); return
-        cd(path)
-        app=cmo; plan=app.getDeploymentPlan()
-        # Attach a plan if missing
-        if plan is None:
-            _ensure_edit()
-            plan_path=_default_adapter_plan_path(adapter)
-            plan_dir = os.path.dirname(plan_path)
-            if not os.path.isdir(plan_dir): os.makedirs(plan_dir)
-            cmo.setPlanPath(plan_path)
-            ok('Attached new plan to %s -> %s' % (adapter, plan_path))
-            _activate()
-            cd(path); app=cmo; plan=app.getDeploymentPlan()
-
-        if plan is None:
-            err('Plan still None for %s' % adapter); results['jca_fail'].append(adapter); cd('/'); return
-
-        planBean=plan.getPlanBean()
-        # Get/Create ModuleOverride for this rar
-        mos=planBean.getModuleOverrides()
-        mo=None
-        if mos:
-            i=0
-            while i<len(mos):
-                m=mos[i]
-                if m.getModuleType()=='rar':
-                    if (m.getModuleName() is None) or (m.getModuleName()==adapter):
-                        mo=m; break
-                i+=1
-        if mo is None:
-            mo=planBean.createModuleOverride()
-            mo.setModuleType('rar')
-            mo.setModuleName(adapter)
-            ok('Created ModuleOverride for %s' % adapter)
-
-        # Current instances in plan
-        existing=set()
-        cos=mo.getConnectionInstanceOverrides()
-        if cos:
-            i=0
-            while i<len(cos):
-                co=cos[i]
-                if co.getJndiName(): existing.add(str(co.getJndiName()))
-                i+=1
-
-        # Add missing instances
-        missing=[]
-        i=0
-        while i<len(instances):
-            jndi = instances[i].get('jndi')
-            if jndi and (jndi not in existing):
-                co = mo.createConnectionInstanceOverride()
-                co.setJndiName(jndi)
-                missing.append(jndi)
-            i+=1
-
-        if len(missing)>0:
-            ok('Adding %d connection-instances: %s' % (len(missing), missing))
-            _ensure_edit(); save(); activate(block='true')
-            # redeploy adapter so plan takes effect
+            cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDriverParams/%s' % (name, name, name))
+            if driver:
+                cmo.setDriverName(driver)
+                info('  DriverName = %s' % driver)
+            if url:
+                cmo.setUrl(url)
+                info('  URL = %s' % url)
+            # Properties (except password)
             try:
-                redeploy(adapter); ok('Redeployed %s' % adapter)
-                results['jca_ok'].append({'adapter':adapter,'added':missing})
+                cd('/JDBCSystemResources/%s/JdbcResource/%s/JDBCDriverParams/%s/Properties/%s' % (name, name, name, name))
+                keys = props.keys()
+                i = 0
+                while i < len(keys):
+                    k = keys[i]; i += 1
+                    if k is None:
+                        continue
+                    # do not set password here
+                    if str(k).lower().find('password') != -1:
+                        continue
+                    if not ls('Properties/' + k, returnMap='true'):
+                        cmo.createProperty(k)
+                    cd('Properties/' + k)
+                    cmo.setValue(props[k])
+                    cd('..')
+                info('  Driver properties set (except password)')
             except:
-                warn('Redeploy failed for %s (check manually)' % adapter)
-                results['jca_ok'].append({'adapter':adapter,'added':missing,'redeploy':'failed'})
+                pass
+        except:
+            info('  Warning: could not set Driver/URL for %s' % name)
+
+        # Targets
+        try:
+            cd('/JDBCSystemResources/' + name)
+            from jarray import array as jarrayArray
+            mapped = local_default_target()
+            set('Targets', jarrayArray(mapped, ObjectName))
+            info('  Targeted to local server(s): %s' % (mapped,))
+        except:
+            info('  Warning: could not set Targets for %s' % name)
+
+        if activate_changes():
+            info('  Activated: %s' % name)
+            return True
         else:
-            ok('All instances already present')
-            results['jca_ok'].append({'adapter':adapter,'added':[]})
-
-        cd('/')
-
+            info('  Activate failed for %s' % name)
+            return False
     except:
-        err('JCA plan update failed: %s' % adapter); results['jca_fail'].append(adapter); cd('/')
+        info('  Create failed for %s' % name)
+        return False
 
-# --- RUN ---------------------------------------------------------------------
+# ----------------------- LOCAL HOOK DBADAPTER --------------------------------
+def ensure_dbadapter_hook(ci_map):
+    """
+    ci_map: { 'eis/DB/xxxx' : {'DataSourceName':'jdbc/Name', 'xADataSourceName':'jdbc/Name'} }
+    Ensures DbAdapter has plan, connection-instances by JNDI, and properties set.
+    """
+    adapter = 'DbAdapter'
+    path = '/AppDeployments/' + adapter
+    if not ls(path, returnMap='true'):
+        info('DbAdapter is not deployed locally; skipping adapter hook')
+        return False
+
+    cd(path)
+    app = cmo
+    plan = app.getDeploymentPlan()
+    if plan is None:
+        # attach a plan under domain deployments
+        try:
+            ensure_edit()
+            try:
+                cd('/')
+                domain_home = cmo.getRootDirectory()
+            except:
+                domain_home = None
+            if domain_home is None:
+                domain_home = os.getcwd()
+            plan_path = os.path.join(domain_home, 'config', 'deployments', adapter, 'plan', 'plan.xml')
+            plan_dir = os.path.dirname(plan_path)
+            if not os.path.isdir(plan_dir):
+                os.makedirs(plan_dir)
+            cd('/AppDeployments/' + adapter)
+            cmo.setPlanPath(plan_path)
+            if activate_changes():
+                info('Attached new plan to %s at %s' % (adapter, plan_path))
+            cd('/AppDeployments/' + adapter)
+            plan = cmo.getDeploymentPlan()
+        except:
+            info('Failed to attach a plan to DbAdapter')
+            cd('/')
+            return False
+
+    if plan is None:
+        info('DbAdapter plan is still None; aborting hook')
+        cd('/')
+        return False
+
+    planBean = plan.getPlanBean()
+
+    # Find or create ModuleOverride for RAR
+    mos = planBean.getModuleOverrides()
+    mo = None
+    if mos:
+        i = 0
+        while i < len(mos):
+            m = mos[i]; i += 1
+            if m.getModuleType() == 'rar':
+                if (m.getModuleName() is None) or (m.getModuleName() == adapter):
+                    mo = m
+                    break
+    if mo is None:
+        mo = planBean.createModuleOverride()
+        mo.setModuleType('rar'); mo.setModuleName(adapter)
+        info('Created ModuleOverride for %s' % adapter)
+
+    # Index existing connection-instances by JNDI
+    existing = {}
+    cos = mo.getConnectionInstanceOverrides()
+    if cos:
+        i = 0
+        while i < len(cos):
+            co = cos[i]; i += 1
+            jndi = co.getJndiName()
+            if jndi:
+                existing[str(jndi)] = co
+
+    # Ensure instances and set datasource properties
+    added = []
+    updated = []
+    keys = ci_map.keys()
+    i = 0
+    while i < len(keys):
+        jndi = keys[i]; i += 1
+        cfg = ci_map[jndi]
+        if existing.has_key(jndi):
+            co = existing[jndi]
+        else:
+            co = mo.createConnectionInstanceOverride()
+            co.setJndiName(jndi)
+            added.append(jndi)
+        # set properties
+        # try xADataSourceName first, else DataSourceName
+        xa = cfg.get('xADataSourceName')
+        ds = cfg.get('DataSourceName')
+        # get or create property overrides
+        def set_prop(coBean, pname, pval):
+            if pval is None:
+                return False
+            cprops = coBean.getConnectionPropertyOverrides()
+            # find existing
+            found = None
+            if cprops:
+                k = 0
+                while k < len(cprops):
+                    cpo = cprops[k]; k += 1
+                    if cpo.getName() == pname:
+                        found = cpo; break
+            if found is None:
+                found = coBean.createConnectionPropertyOverride()
+                found.setName(pname)
+            found.setValue(pval)
+            return True
+
+        changed = False
+        if xa:
+            if set_prop(co, 'xADataSourceName', xa):
+                changed = True
+        if ds:
+            if set_prop(co, 'DataSourceName', ds):
+                changed = True
+        if changed and (jndi not in added):
+            updated.append(jndi)
+
+    # Save plan and redeploy adapter
+    ensure_edit()
+    ok = activate_changes()
+    try:
+        redeploy(adapter)
+    except:
+        info('Redeploy of DbAdapter failed; check manually')
+
+    info('DbAdapter hook summary: added instances=%s, updated instances=%s' % (added, updated))
+    cd('/')
+    return True
+
+# ----------------------- MAIN ------------------------------------------------
 def main():
-    step('Connect to Admin')
-    connect(ADMIN_USER, ADMIN_PASS, ADMIN_URL)
-    ok('Connected to %s' % ADMIN_URL)
-    domainConfig(); ok('In domainConfig tree')
+    step('DEV: export JDBC and DbAdapter links')
+    jdbc_list, db_ci_map = dev_export_jdbc_and_dbadapter()
+    info('DEV JDBC count: %d' % len(jdbc_list))
+    info('DEV DbAdapter CI entries: %d' % len(db_ci_map.keys()))
 
-    man=_load_manifest(MANIFEST)
-    results={'jdbc_ok':[],'jdbc_fail':[],'jdbc_exists':[],'jms_ok':[],'jms_fail':[],'jca_ok':[],'jca_fail':[],'jca_miss':[]}
+    step('LOCAL: connect')
+    connect(LOCAL_ADMIN_USER, LOCAL_ADMIN_PASS, LOCAL_ADMIN_URL)
+    domainConfig()
+    info('Connected to LOCAL and in domainConfig')
 
-    # JDBC
-    for ds in man.get('jdbc', []): ensure_jdbc(ds, results)
+    # Create JDBC locally
+    success = 0; failed = 0
+    i = 0
+    while i < len(jdbc_list):
+        if local_create_jdbc(jdbc_list[i]):
+            success += 1
+        else:
+            failed += 1
+        i += 1
+    info('LOCAL JDBC created=%d, failed=%d' % (success, failed))
 
-    # JMS
-    for mod in man.get('jms', []): ensure_jms_module(mod, results)
+    # Hook DbAdapter to the same datasource names as DEV
+    step('LOCAL: hook DbAdapter connection-instances to datasource JNDIs')
+    ensure_dbadapter_hook(db_ci_map)
 
-    # JCA (NEW)
-    for jca in man.get('jca', []):
-        adapter = jca.get('adapter')
-        instances = jca.get('instances') or []
-        ensure_adapter_instances(adapter, instances, results)
-
-    # Summary
-    step('RESULT SUMMARY')
-    print 'JDBC created   :', results['jdbc_ok']
-    print 'JDBC existed   :', results['jdbc_exists']
-    print 'JDBC failed    :', results['jdbc_fail']
-    print 'JMS ok         :', results['jms_ok']
-    print 'JMS failed     :', results['jms_fail']
-    print 'JCA updated    :', results['jca_ok']
-    print 'JCA failed     :', results['jca_fail']
-    print 'JCA not found  :', results['jca_miss']
-
-    disconnect(); ok('Disconnected'); exit()
+    disconnect()
+    info('Done')
 
 main()
 
 
 ⸻
 
-How to run (quick)
-	1.	Export on DEV
-
-$ $WL_HOME/common/bin/wlst.sh export_dev_jca.py
-# -> export/manifest-dev-YYYYMMDD-HHMMSS.json
-
-	2.	Import on LOCAL (Integrated or standalone)
-
-$ $WL_HOME/common/bin/wlst.sh import_local_jca.py
-
-	•	The importer:
-	•	Creates JDBC/JMS per manifest.
-	•	For each adapter in manifest["jca"], ensures every {"jndi": "..."}
-exists in the adapter’s deployment plan on local.
-	•	If the adapter has no plan, it attaches one under:
-<DOMAIN_HOME>/config/deployments/<Adapter>/plan/plan.xml
-	•	Redeploys the adapter so the plan takes effect.
+What this script does (and what it doesn’t)
+	•	Clones every JDBC datasource from DEV to LOCAL: same Name, JNDI(s), Driver, URL, and driver properties (except any property with “password” in its name).
+	•	Targets each datasource to DefaultServer on LOCAL (or first server if DefaultServer isn’t present).
+	•	Reads DbAdapter plan on DEV to find which connection-instances (JNDI) use which datasource JNDI (DataSourceName / xADataSourceName), and mirrors that on LOCAL by ensuring the same connection-instances exist with the same DS names, then redeploys DbAdapter.
+	•	It does not set JDBC passwords (not readable on DEV). After the run, set the local passwords once in the Console or extend the script to read them from environment variables.
 
 ⸻
 
-Notes / limits
-	•	For JmsAdapter and most JCA adapters, the JNDI name is the key you need; any endpoint specifics (e.g., destinations, providers) are part of your JMS modules or the consuming configuration.
-	•	If some adapters require extra properties (rare for your listed eis/jms/SGBL/... CFs), we can extend the exporter to capture connection instance property overrides and set them in the importer. (Say the word and I’ll add that pass.)
-	•	JDBC passwords are masked in Dev; set them locally once (Console) or we can wire an ENV-driven password setter.
-
-⸻
-
-If you want, send me the new manifest’s jca section after running the exporter, and I’ll double-check that your eis/jms/SGBL/* JNDIs are listed and ready to be created locally.
+If you want me to add an ENV-based password injector (e.g., DS_<NAME>_PASSWORD), say the word and I’ll bolt it on cleanly so you can automate the whole thing end-to-end.
