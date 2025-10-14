@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.stratum</groupId>
+        <artifactId>stratum</artifactId>
+        <version>1.0.0</version>
+    </parent>
+    <artifactId>stratum-backend</artifactId>
+    <packaging>pom</packaging>
+    <name>Stratum Backend</name>
+
+    <modules>
+        <module>platform-core</module>
+        <module>platform-dsl</module>
+        <module>platform-adapters</module>
+        <module>platform-transform</module>
+        <module>platform-rules</module>
+        <module>platform-orchestration</module>
+        <module>platform-audit-lineage</module>
+        <module>platform-email</module>
+        <module>platform-security</module>
+        <module>server-spi</module>
+        <module>server-spi-liberty</module>
+        <module>server-spi-wildfly</module>
+        <module>server-spi-payara</module>
+        <module>apps/api-gateway</module>
+        <module>apps/worker-pipelines</module>
+        <module>apps/worker-transform</module>
+        <module>apps/worker-rules</module>
+        <module>apps/worker-indexer</module>
+        <module>apps/admin-console-api</module>
+    </modules>
+
+    <properties>
+        <jakarta.platform.version>10.0.0</jakarta.platform.version>
+        <microprofile.version>6.1</microprofile.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>jakarta.platform</groupId>
+                <artifactId>jakarta.jakartaee-api</artifactId>
+                <version>${jakarta.platform.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.eclipse.microprofile</groupId>
+                <artifactId>microprofile</artifactId>
+                <version>${microprofile.version}</version>
+                <type>pom</type>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>5.10.2</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>

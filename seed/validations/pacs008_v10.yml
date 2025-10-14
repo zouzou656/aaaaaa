@@ -1,0 +1,4 @@
+schema: pacs.008.001.10
+constraints:
+  - id: amount-positive
+    message: Amount must be positive

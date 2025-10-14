@@ -1,0 +1,10 @@
+flow: pain001_incoming
+version: 1.0
+receive: { adapter: sftp, path: ./in/pain001 }
+validate:
+  iso20022: xsd(pain.001.001.11)
+transform:
+  from: pain.001.001.11
+  to: pacs.008.001.10
+route:
+  to: jms:queue/sepa_out

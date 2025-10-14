@@ -1,0 +1,4 @@
+schema: camt.053.001.09
+constraints:
+  - id: statement-date
+    message: Statement date must be present

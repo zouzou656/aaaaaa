@@ -1,0 +1,4 @@
+schema: pain.001.001.11
+constraints:
+  - id: debtor-bic
+    message: Debtor BIC required

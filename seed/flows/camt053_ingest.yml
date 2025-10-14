@@ -1,0 +1,7 @@
+flow: camt053_ingest
+version: 1.0
+receive: { adapter: file, path: ./in/camt053 }
+validate:
+  iso20022: xsd(camt.053.001.09)
+route:
+  to: analytics:indexer
