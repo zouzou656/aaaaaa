@@ -1,0 +1,18 @@
+flow: pacs008_incoming
+version: 1.2
+receive: { adapter: file, path: ./in/payments, pattern: "*.xml" }
+validate:
+  iso20022: xsd(pacs.008.001.10)
+  ruleset: pacs008_core@v3
+transform:
+  from: pacs.008.001.10
+  to: CDM.Payment
+route:
+  when: amount > 250000 && within_cutoff("TARGET2")
+  to: jms:queue/rtgs_out
+else:
+  to: jms:queue/sepa_out
+ack:
+  pacs.002: success_or_reject
+audit: full
+retries: { policy: exponential, attempts: 5, maxDelay: 60s }

@@ -1,0 +1,12 @@
+[Unit]
+Description=Stratum Liberty Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/stratum
+ExecStart=/opt/stratum/deploy/liberty/run-local-liberty.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
