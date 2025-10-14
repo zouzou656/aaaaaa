@@ -1,0 +1,10 @@
+<server description="Stratum Open Liberty">
+    <featureManager>
+        <feature>jakartaee-10.0</feature>
+        <feature>mpConfig-3.0</feature>
+        <feature>mpHealth-4.0</feature>
+        <feature>mpMetrics-5.0</feature>
+    </featureManager>
+    <httpEndpoint httpPort="9080" httpsPort="9443"/>
+    <variable name="stratum.datasource.url" value="jdbc:postgresql://postgres:5432/stratum"/>
+</server>

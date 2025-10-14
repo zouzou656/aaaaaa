@@ -1,0 +1,5 @@
+rma:
+  - bic: BANKDEFFXXX
+    status: active
+  - bic: BANKUS33XXX
+    status: pending

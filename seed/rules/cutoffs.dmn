@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/"
+             id="cutoffs"
+             name="Cutoffs">
+  <decision id="withinCutoff" name="withinCutoff">
+    <variable name="result" typeRef="boolean"/>
+  </decision>
+</definitions>

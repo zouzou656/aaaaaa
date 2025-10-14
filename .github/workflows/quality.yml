@@ -1,0 +1,23 @@
+name: Quality
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: SpotBugs
+        run: mvn -B com.github.spotbugs:spotbugs-maven-plugin:4.8.3.0:check
+      - name: PMD
+        run: mvn -B org.apache.maven.plugins:maven-pmd-plugin:3.22.0:check
+      - name: OWASP Dependency Check
+        run: mvn -B org.owasp:dependency-check-maven:9.1.0:aggregate
