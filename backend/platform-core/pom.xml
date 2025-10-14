@@ -22,13 +22,11 @@
         <dependency>
             <groupId>org.eclipse.microprofile.config</groupId>
             <artifactId>microprofile-config-api</artifactId>
-            <version>${microprofile.version}</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.eclipse.microprofile.metrics</groupId>
             <artifactId>microprofile-metrics-api</artifactId>
-            <version>${microprofile.version}</version>
             <scope>provided</scope>
         </dependency>
         <dependency>

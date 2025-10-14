@@ -36,7 +36,7 @@
 
     <properties>
         <jakarta.platform.version>10.0.0</jakarta.platform.version>
-        <microprofile.version>6.1</microprofile.version>
+        <microprofile.version>6.0</microprofile.version>
     </properties>
 
     <dependencyManagement>
@@ -49,10 +49,10 @@
             </dependency>
             <dependency>
                 <groupId>org.eclipse.microprofile</groupId>
-                <artifactId>microprofile</artifactId>
+                <artifactId>microprofile-bom</artifactId>
                 <version>${microprofile.version}</version>
                 <type>pom</type>
-                <scope>provided</scope>
+                <scope>import</scope>
             </dependency>
             <dependency>
                 <groupId>org.junit.jupiter</groupId>
