@@ -6,6 +6,3 @@ Stratum is a banking-focused middleware with ISO 20022 support. This repository 
 - Frontend under `frontend/web-console`
 - Deployment stubs under `deploy/`
 - Seeds and templates under `seed/`
-- Documentation under `docs/`
-
-For a hands-on walkthrough of installing prerequisites, building artifacts, and launching the platform locally, follow the [Quickstart guide](docs/README-quickstart.md).
